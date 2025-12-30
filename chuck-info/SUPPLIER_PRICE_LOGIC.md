@@ -6,6 +6,17 @@
 
 ---
 
+### 📌 Unit Cost Terminology
+
+> [!IMPORTANT]
+> Throughout this document, **SYNC unit_cost** and **BP (Brightpearl) Supplier Unit Cost** refer to the **same value**.
+>
+> SYNC reads the supplier unit cost from Brightpearl and stores it in its `unit_cost` field. When comparing Chuck calculations against SYNC/BP values, you are comparing against the current Brightpearl supplier cost.
+>
+> **Data Flow:** `Brightpearl Supplier Unit Cost` → `SYNC unit_cost` (identical values)
+
+---
+
 ### 📅 Supplier File Verification (Latest FTP Check)
 
 | Supplier | File Name | Last Modified on FTP | Last Downloaded |
@@ -58,28 +69,28 @@ $$
 
 * **Raw Data:** `Gross: 231.20`, `Disc Group: TNN` -> `Disc %: 98.9` (Simulated)
 * **Calculation:** `231.20 * (1 - 0.989) ≈ 2.48`
-* **Chuck DB:** `2.48` | **SYNC:** `2.43` | ✅ Match
+* **Chuck DB:** `2.48` | **BP:** `2.43` | ✅ Match
 
 #### Sample 2: SKU `6315582`
 
 * **Raw Data:** `Gross: 347.20`, `No Discount Found`
 * **Calculation:** `347.20 * 1 = 347.20`
-* **Chuck DB:** `347.20` | **SYNC:** `343.20` | ✅ Match
+* **Chuck DB:** `347.20` | **BP:** `343.20` | ✅ Match
 
 #### Sample 3: SKU `6312806`
 
 * **Raw Data:** `Gross: 344.00`
-* **Chuck DB:** `344.00` | **SYNC:** `316.80` | ⚠️ 8.6% Diff (Likely discount mismatch)
+* **Chuck DB:** `344.00` | **BP:** `316.80` | ⚠️ 8.6% Diff (Likely discount mismatch)
 
 #### Sample 4: SKU `6311787`
 
 * **Raw Data:** `Gross: 120.80`
-* **Chuck DB:** `120.80` | **SYNC:** `119.19` | ✅ 1.4% Diff
+* **Chuck DB:** `120.80` | **BP:** `119.19` | ✅ 1.4% Diff
 
 #### Sample 5: SKU `6314049`
 
 * **Raw Data:** `Gross: 345.60`
-* **Chuck DB:** `345.60` | **SYNC:** `341.60` | ✅ 1.2% Diff
+* **Chuck DB:** `345.60` | **BP:** `341.60` | ✅ 1.2% Diff
 
 ---
 
@@ -120,32 +131,32 @@ $$
 
 * **Raw Row:** `['4560068', ..., '106.00', '36.00', '67.84', ...]`
 * **Target:** Col E (`67.84`)
-* **Chuck DB:** `67.84` | **SYNC:** `67.84` | ✅ **Perfect Match**
+* **Chuck DB:** `67.84` | **BP:** `67.84` | ✅ **Perfect Match**
 
 #### Sample 2: SKU `1432825`
 
 * **Raw Row:** `['1432825', ..., '2270.00', '24.00', '1725.20', ...]`
 * **Target:** Col E (`1725.20`)
-* **Chuck DB:** `1,725.20` | **SYNC:** `1,725.20` | ✅ **Perfect Match**
+* **Chuck DB:** `1,725.20` | **BP:** `1,725.20` | ✅ **Perfect Match**
 
 #### Sample 3: SKU `4375681`
 
 * **Raw Row:** `['4375681', ..., '7940.00', '32.00', '5399.20', ...]`
 * **Target:** Col E (`5399.20`)
-* **Chuck DB:** `5,399.20` | **SYNC:** `5,066.00` | ⚠️ ~6% Diff (Supplier Price Higher)
+* **Chuck DB:** `5,399.20` | **BP:** `5,066.00` | ⚠️ ~6% Diff (Supplier Price Higher)
 
 #### Sample 4: SKU `2171621` (Unit Mismatch)
 
 * **Raw Row:** `['2171621', ..., '2.07', 'STK']`
 * **Target:** Col E (`2.07`)
-* **Chuck DB:** `2.07` | **SYNC:** `207.00`
-* **Analysis:** Chuck is correct per file. SYNC expects Pack of 100.
+* **Chuck DB:** `2.07` | **BP:** `207.00`
+* **Analysis:** Chuck is correct per file. BP expects Pack of 100.
 
 #### Sample 5: SKU `4402222`
 
 * **Raw Row:** `['4402222', ..., '5032.00']`
 * **Target:** Col E (`5032.00`)
-* **Chuck DB:** `5,032.00` | **SYNC:** `7,956.00` | ❌ -36% Diff
+* **Chuck DB:** `5,032.00` | **BP:** `7,956.00` | ❌ -36% Diff
 
 ---
 
@@ -187,31 +198,31 @@ $$
 
 * **Raw Line:** `... 15007036998 ... STK    2734.50 ...`
 * **Extraction:** Position 84-92 -> `" 2734.50"`
-* **Chuck DB:** `2,734.50` | **SYNC:** `2,596.20` | ⚠️ 5.3% Diff (Missing Discount)
+* **Chuck DB:** `2,734.50` | **BP:** `2,596.20` | ⚠️ 5.3% Diff (Missing Discount)
 
 #### Sample 2: SKU `7036974`
 
 * **Raw Line:** `... 15007036974 ... STK    1826.40 ...`
 * **Extraction:** `" 1826.40"`
-* **Chuck DB:** `1,826.40` | **SYNC:** `1,805.10` | ✅ ~1% Diff (Missing Discount)
+* **Chuck DB:** `1,826.40` | **BP:** `1,805.10` | ✅ ~1% Diff (Missing Discount)
 
 #### Sample 3: SKU `1401460`
 
 * **Raw Line:** `... 1401460 ... 911.00 ...`
 * **Extraction:** `" 911.00"`
-* **Chuck DB:** `911.00` | **SYNC:** `550.00` | ❌ 65% Diff
+* **Chuck DB:** `911.00` | **BP:** `550.00` | ❌ 65% Diff
 
 #### Sample 4: SKU `4533504`
 
 * **Raw Line:** `... 4533504 ... 913.55 ...`
 * **Extraction:** `" 913.55"`
-* **Chuck DB:** `913.55` | **SYNC:** `890.73` | ✅ 2.6% Diff
+* **Chuck DB:** `913.55` | **BP:** `890.73` | ✅ 2.6% Diff
 
 #### Sample 5: SKU `1377199`
 
 * **Raw Line:** `... 1377199 ... 333.25 ...`
 * **Extraction:** `" 333.25"`
-* **Chuck DB:** `333.25` | **SYNC:** `324.88` | ✅ 2.6% Diff
+* **Chuck DB:** `333.25` | **BP:** `324.88` | ✅ 2.6% Diff
 
 ---
 
@@ -219,8 +230,8 @@ $$
 
 ### Dahl (Complete Set)
 
-| SKU         | Chuck DB Cost | SYNC unit_cost |      Diff |  Diff% |
-| :---------- | ------------: | -------------: | --------: | -----: |
+| SKU         | Chuck DB Cost | BP Supplier Unit Cost |      Diff |  Diff% |
+| :---------- | ------------: | --------------------: | --------: | -----: |
 | DAL-4375681 |      5,399.20 |       5,066.00 |    333.20 |   6.6% |
 | DAL-4375683 |      6,752.40 |       6,330.80 |    421.60 |   6.7% |
 | DAL-4375684 |      6,752.40 |       6,330.80 |    421.60 |   6.7% |
@@ -324,8 +335,8 @@ $$
 
 ### Heidenreich (Complete Set)
 
-| SKU         | Chuck DB Cost | SYNC unit_cost |   Diff |  Diff% |
-| :---------- | ------------: | -------------: | -----: | -----: |
+| SKU         | Chuck DB Cost | BP Supplier Unit Cost |   Diff |  Diff% |
+| :---------- | ------------: | --------------------: | -----: | -----: |
 | HEI-7036998 |      2,734.50 |       2,596.20 | 138.30 |   5.3% |
 | HEI-7036999 |      3,306.00 |       3,138.00 | 168.00 |   5.4% |
 | HEI-7036972 |      3,989.10 |       3,787.80 | 201.30 |   5.3% |
@@ -421,8 +432,8 @@ $$
 
 ### Ahlsell (Complete Set)
 
-| SKU         | Chuck DB Cost | SYNC unit_cost |   Diff |  Diff% |
-| :---------- | ------------: | -------------: | -----: | -----: |
+| SKU         | Chuck DB Cost | BP Supplier Unit Cost |   Diff |  Diff% |
+| :---------- | ------------: | --------------------: | -----: | -----: |
 | AHL-6311713 |          2.48 |           2.43 |   0.05 |   2.1% |
 | AHL-6311792 |          6.52 |           6.44 |   0.08 |   1.2% |
 | AHL-6315586 |        100.40 |          99.19 |   1.21 |   1.2% |
@@ -466,7 +477,7 @@ $$
 ## 5. Addition: Technical Analysis & Verification (System Internals)
 
 > **Date:** 2025-12-30
-> **Analyst:** Ozan
+> **Analyst:** Ozan (Antigravity Deepmind)
 > **Purpose:** Technical proof of update frequency, data flow, and calculation accuracy.
 
 ### 1. Update Frequency & Trigger Mechanism
