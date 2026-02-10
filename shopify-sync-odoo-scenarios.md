@@ -116,7 +116,7 @@ sequenceDiagram
     Customer->>Shopify: Places order
     Note over Shopify: Assigns Warehouse location
 
-    Shopify->>SYNC: Order payload<br/>(location = Warehouse)
+    Shopify->>SYNC: Order payload<br/>(location = Allierbygget)
     SYNC->>SYNC: Maps & transforms payload<br/>to Odoo format
     SYNC->>Odoo: Creates Sale Order
 
@@ -127,14 +127,14 @@ sequenceDiagram
     Odoo->>Odoo: Invoice & payment processed
     deactivate Odoo
 
-    Note over Odoo: ✅ Stock decremented from Warehouse
+    Note over Odoo: ✅ Stock decremented from Allierbygget
 ```
 
 ### Roles
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Selects Warehouse location + order source of truth |
+| **Shopify** | Selects Allierbygget (Bergen) location + order source of truth |
 | **SYNC** | Correct field mapping & payload delivery |
 | **Odoo** | Stock reservation, picking, invoicing, payment |
 
@@ -150,9 +150,8 @@ Shopify has a flat list of locations. Each represents a fulfillment point:
 
 | Shopify Location | Purpose |
 |-----------------|---------|
-| **Nettlager** | Main Warehouse — physical stock (primary) |
-| **Allierbygget (Bergen)** | Main Warehouse — physical stock (secondary location) |
-| **Vendors** | Aggregated Dropship location (sum of all vendor stocks) |
+| **Allierbygget (Bergen)** | **Main Warehouse** — physical stock (primary) |
+| **Nettlager** | **Dropship** — aggregated vendor stock |
 
 ### Odoo Side: Vendor Locations (Detailed)
 
@@ -221,20 +220,17 @@ The mapping model supports two types:
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
 flowchart LR
     subgraph Shopify ["Shopify Locations"]
+        SA["Allierbygget (Bergen)"]
         SN["Nettlager"]
-        SA["Allierbygget Bergen"]
-        SV["Vendors"]
     end
 
     subgraph Mapping ["sync.shopify.location"]
         M1["Type: Warehouse\n1:1 Mapping"]
-        M1B["Type: Warehouse\n1:1 Mapping"]
         M2["Type: Aggregated\nMulti-Source"]
     end
 
     subgraph Odoo ["Odoo Stock Locations"]
-        OW["WH/Stock\n(Nettlager)"]
-        OWB["WH/Stock\n(Bergen)"]
+        OW["WH/Stock\n(Allierbygget)"]
         OA["Ahlsell View/Stock"]
         OD["Dahl View/Stock"]
         OH["Heidenreich View/Stock"]
@@ -243,9 +239,8 @@ flowchart LR
         OV["VikingBad View/Stock"]
     end
 
-    SN --- M1 --- OW
-    SA --- M1B --- OWB
-    SV --- M2
+    SA --- M1 --- OW
+    SN --- M2
     M2 --- OA
     M2 --- OD
     M2 --- OH
@@ -260,12 +255,11 @@ flowchart LR
 
 | Mapping Type | Shopify Location | Odoo Location(s) | Use Case |
 |-------------|-----------------|-------------------|----------|
-| **Warehouse** (1:1) | Nettlager | WH/Stock (Nettlager) | Primary warehouse fulfillment |
-| **Warehouse** (1:1) | Allierbygget (Bergen) | WH/Stock (Bergen) | Secondary warehouse fulfillment |
-| **Aggregated** (N:1) | Vendors | Ahlsell, Dahl, Heidenreich, Korsbakken, Sanipro, VikingBad `View/Stock` | Combined vendor stock for Dropship |
+| **Warehouse** (1:1) | **Allierbygget (Bergen)** | WH/Stock | Main warehouse fulfillment |
+| **Aggregated** (N:1) | **Nettlager** | Ahlsell, Dahl, Heidenreich, Korsbakken, Sanipro, VikingBad `View/Stock` | Combined vendor stock for Dropship |
 
 > [!IMPORTANT]
-> **Aggregated mapping** is key for Dropship: Shopify shows one "Vendors" location, but Odoo tracks stock per-vendor separately. SYNC aggregates all vendor `View/Stock` quantities and pushes the combined total to Shopify's "Vendors" location.
+> **Aggregated mapping** is key for Dropship: Shopify shows one "Nettlager" location, but Odoo tracks stock per-vendor separately. SYNC aggregates all vendor `View/Stock` quantities and pushes the combined total to Shopify's "Nettlager" location.
 
 ---
 
@@ -284,9 +278,9 @@ sequenceDiagram
     participant Vendor as Vendor (e.g. Ahlsell)
 
     Customer->>Shopify: Places order
-    Note over Shopify: Product available at<br/>"Vendors" location
+    Note over Shopify: Product available at<br/>"Nettlager" (Dropship)
 
-    Shopify->>SYNC: Order payload<br/>(location = Vendors)
+    Shopify->>SYNC: Order payload<br/>(location = Nettlager)
     SYNC->>SYNC: Maps payload +<br/>includes location_id
     SYNC->>Odoo: Creates Sale Order<br/>(with Dropship location)
 
@@ -357,7 +351,7 @@ sequenceDiagram
     participant Ahlsell as Vendor: Ahlsell
 
     Customer->>Shopify: Places order (mixed items)
-    Note over Shopify: Split fulfillment:<br/>Item A → Nettlager (WH)<br/>Item B → Vendors (Dropship)
+    Note over Shopify: Split fulfillment:<br/>Item A → Allierbygget (WH)<br/>Item B → Nettlager (Dropship)
 
     Shopify->>SYNC: Order payload with<br/>per-line location_id
 
@@ -367,7 +361,7 @@ sequenceDiagram
     activate Odoo
     Note right of Odoo: --- WAREHOUSE FLOW (Item A) ---
     Odoo->>Odoo: Reserve stock from WH/Stock
-    Odoo->>Odoo: Create picking (Nettlager)
+    Odoo->>Odoo: Create picking (Allierbygget)
 
     Note right of Odoo: --- DROPSHIP FLOW (Item B) ---
     Odoo->>Odoo: No WH/Stock touched
@@ -418,7 +412,7 @@ flowchart LR
 
 ## Scenario 4 — Out of Stock → Backorder / Fallback
 
-> Warehouse stock is 0, but vendor stock exists. Shopify routes to the "Vendors" location automatically.
+> Warehouse stock is 0, but vendor stock exists. Shopify routes to the "Nettlager" location automatically.
 
 ### Flow
 
@@ -431,12 +425,12 @@ sequenceDiagram
 
     Customer->>Shopify: Places order
 
-    Note over Shopify: Nettlager (WH) stock = 0<br/>Vendors stock available<br/>(aggregated from Ahlsell,<br/>Dahl, Korsbakken, etc.)
+    Note over Shopify: Allierbygget (WH) stock = 0<br/>Nettlager stock available<br/>(aggregated from Ahlsell,<br/>Dahl, Korsbakken, etc.)
 
     Shopify->>Shopify: Availability check
-    Note over Shopify: Decision: Route to Vendors
+    Note over Shopify: Decision: Route to Nettlager
 
-    Shopify->>SYNC: Order payload<br/>(location_id = Vendors)
+    Shopify->>SYNC: Order payload<br/>(location_id = Nettlager)
     SYNC->>Odoo: Creates Sale Order<br/>(Dropship route)
 
     activate Odoo
@@ -467,15 +461,15 @@ flowchart RL
     end
 
     subgraph Shopify ["Shopify Display"]
-        SN["Nettlager: 0"]
-        SV["Vendors: 45"]
+        SA["Allierbygget: 0"]
+        SN["Nettlager: 45"]
     end
 
-    WH -->|"0"| SN
+    WH -->|"0"| SA
     V1 --> AGG
     V2 --> AGG
     V3 --> AGG
-    AGG -->|"45"| SV
+    AGG -->|"45"| SN
 
     style Odoo fill:#f3edf2,stroke:#714b67,color:#1a1a1a
     style SYNC_AGG fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
