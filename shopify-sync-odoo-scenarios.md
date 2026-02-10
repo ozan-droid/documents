@@ -150,9 +150,9 @@ Shopify has a flat list of locations. Each represents a fulfillment point:
 
 | Shopify Location | Purpose |
 |-----------------|---------|
-| **Nettlager** | Main Warehouse (physical stock) |
-| **Allierbygget (Bergen)** | Secondary Warehouse |
-| **Vendors** | Aggregated Dropship location (all vendor stock combined) |
+| **Nettlager** | Main Warehouse — physical stock (primary) |
+| **Allierbygget (Bergen)** | Main Warehouse — physical stock (secondary location) |
+| **Vendors** | Aggregated Dropship location (sum of all vendor stocks) |
 
 ### Odoo Side: Vendor Locations (Detailed)
 
@@ -222,16 +222,19 @@ The mapping model supports two types:
 flowchart LR
     subgraph Shopify ["Shopify Locations"]
         SN["Nettlager"]
+        SA["Allierbygget Bergen"]
         SV["Vendors"]
     end
 
     subgraph Mapping ["sync.shopify.location"]
         M1["Type: Warehouse\n1:1 Mapping"]
+        M1B["Type: Warehouse\n1:1 Mapping"]
         M2["Type: Aggregated\nMulti-Source"]
     end
 
     subgraph Odoo ["Odoo Stock Locations"]
-        OW["WH/Stock"]
+        OW["WH/Stock\n(Nettlager)"]
+        OWB["WH/Stock\n(Bergen)"]
         OA["Ahlsell View/Stock"]
         OD["Dahl View/Stock"]
         OH["Heidenreich View/Stock"]
@@ -241,6 +244,7 @@ flowchart LR
     end
 
     SN --- M1 --- OW
+    SA --- M1B --- OWB
     SV --- M2
     M2 --- OA
     M2 --- OD
@@ -256,7 +260,8 @@ flowchart LR
 
 | Mapping Type | Shopify Location | Odoo Location(s) | Use Case |
 |-------------|-----------------|-------------------|----------|
-| **Warehouse** (1:1) | Nettlager | WH/Stock | Standard warehouse fulfillment |
+| **Warehouse** (1:1) | Nettlager | WH/Stock (Nettlager) | Primary warehouse fulfillment |
+| **Warehouse** (1:1) | Allierbygget (Bergen) | WH/Stock (Bergen) | Secondary warehouse fulfillment |
 | **Aggregated** (N:1) | Vendors | Ahlsell, Dahl, Heidenreich, Korsbakken, Sanipro, VikingBad `View/Stock` | Combined vendor stock for Dropship |
 
 > [!IMPORTANT]
@@ -351,7 +356,7 @@ sequenceDiagram
     participant Odoo
     participant Ahlsell as Vendor: Ahlsell
 
-    Customer->>Shopify: Places order<br/>(mixed items)
+    Customer->>Shopify: Places order (mixed items)
     Note over Shopify: Split fulfillment:<br/>Item A → Nettlager (WH)<br/>Item B → Vendors (Dropship)
 
     Shopify->>SYNC: Order payload with<br/>per-line location_id
@@ -360,22 +365,19 @@ sequenceDiagram
     SYNC->>Odoo: Creates Sale Order<br/>(with split location data)
 
     activate Odoo
-    rect rgb(234, 251, 231)
-        Note over Odoo: Warehouse Flow (Item A)
-        Odoo->>Odoo: Reserve stock from WH/Stock
-        Odoo->>Odoo: Create picking (Nettlager)
-    end
+    Note right of Odoo: --- WAREHOUSE FLOW (Item A) ---
+    Odoo->>Odoo: Reserve stock from WH/Stock
+    Odoo->>Odoo: Create picking (Nettlager)
 
-    rect rgb(255, 244, 224)
-        Note over Odoo: Dropship Flow (Item B)
-        Odoo->>Odoo: No WH/Stock touched
-        Odoo->>Odoo: Find vendor for product<br/>(Ahlsell)
-        Odoo->>Ahlsell: Create Purchase Order
-        Note over Odoo: Source: Ahlsell View/Stock
-        Ahlsell-->>Customer: Ships directly
-    end
+    Note right of Odoo: --- DROPSHIP FLOW (Item B) ---
+    Odoo->>Odoo: No WH/Stock touched
+    Odoo->>Odoo: Find vendor for product (Ahlsell)
+    Odoo->>Ahlsell: Create Purchase Order
+    Note right of Odoo: Source: Ahlsell View/Stock
+    Ahlsell-->>Customer: Ships directly
 
-    Odoo->>Odoo: Invoice & payment for full order
+    Note right of Odoo: --- COMMON ---
+    Odoo->>Odoo: Invoice and payment for full order
     deactivate Odoo
 ```
 
