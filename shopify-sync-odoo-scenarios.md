@@ -140,9 +140,133 @@ sequenceDiagram
 
 ---
 
+## Location Architecture — How Shopify & Odoo Locations Connect
+
+Before diving into Dropship scenarios, it's essential to understand how locations are structured across both systems and how SYNC maps between them.
+
+### Shopify Side: Locations
+
+Shopify has a flat list of locations. Each represents a fulfillment point:
+
+| Shopify Location | Purpose |
+|-----------------|---------|
+| **Nettlager** | Main Warehouse (physical stock) |
+| **Allierbygget (Bergen)** | Secondary Warehouse |
+| **Vendors** | Aggregated Dropship location (all vendor stock combined) |
+
+### Odoo Side: Vendor Locations (Detailed)
+
+Odoo maintains **per-vendor** stock locations, each with two sub-locations:
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
+flowchart TB
+    subgraph WH ["Main Warehouse"]
+        WHS["WH/Stock"]
+    end
+
+    subgraph VendorLocations ["Vendor Locations (Type: Vendor)"]
+        subgraph Ahlsell ["Ahlsell"]
+            AS["View/Stock"]
+            AQ["View/Quarantine"]
+        end
+        subgraph Dahl ["Brødrene Dahl"]
+            DS["View/Stock"]
+            DQ["View/Quarantine"]
+        end
+        subgraph Heidenreich ["Heidenreich"]
+            HS["View/Stock"]
+            HQ["View/Quarantine"]
+        end
+        subgraph Korsbakken ["Korsbakken"]
+            KS["View/Stock"]
+            KQ["View/Quarantine"]
+        end
+        subgraph Sanipro ["Sanipro"]
+            SS["View/Stock"]
+            SQ["View/Quarantine"]
+        end
+        subgraph VikingBad ["VikingBad"]
+            VS["View/Stock"]
+            VQ["View/Quarantine"]
+        end
+    end
+
+    style WH fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
+    style VendorLocations fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style Ahlsell fill:#f9f9f9,stroke:#ccc,color:#1a1a1a
+    style Dahl fill:#f9f9f9,stroke:#ccc,color:#1a1a1a
+    style Heidenreich fill:#f9f9f9,stroke:#ccc,color:#1a1a1a
+    style Korsbakken fill:#f9f9f9,stroke:#ccc,color:#1a1a1a
+    style Sanipro fill:#f9f9f9,stroke:#ccc,color:#1a1a1a
+    style VikingBad fill:#f9f9f9,stroke:#ccc,color:#1a1a1a
+```
+
+| Vendor Location | Sub-Location | Purpose |
+|----------------|-------------|---------|
+| **Ahlsell** | `View/Stock` | Available stock from Ahlsell |
+| | `View/Quarantine` | Quarantined / reserved stock |
+| **Brødrene Dahl** | `View/Stock` | Available stock from Dahl |
+| | `View/Quarantine` | Quarantined stock |
+| **Heidenreich** | `View/Stock` / `View/Quarantine` | Same pattern |
+| **Korsbakken** | `View/Stock` / `View/Quarantine` | Same pattern |
+| **Sanipro** | `View/Stock` / `View/Quarantine` | Same pattern |
+| **VikingBad** | `View/Stock` / `View/Quarantine` | Same pattern |
+
+### Shopify ↔ Odoo Location Mapping (via `sync.shopify.location`)
+
+The mapping model supports two types:
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
+flowchart LR
+    subgraph Shopify ["Shopify Locations"]
+        SN["Nettlager"]
+        SV["Vendors"]
+    end
+
+    subgraph Mapping ["sync.shopify.location"]
+        M1["Type: Warehouse\n1:1 Mapping"]
+        M2["Type: Aggregated\nMulti-Source"]
+    end
+
+    subgraph Odoo ["Odoo Stock Locations"]
+        OW["WH/Stock"]
+        OA["Ahlsell View/Stock"]
+        OD["Dahl View/Stock"]
+        OH["Heidenreich View/Stock"]
+        OK["Korsbakken View/Stock"]
+        OS["Sanipro View/Stock"]
+        OV["VikingBad View/Stock"]
+    end
+
+    SN --- M1 --- OW
+    SV --- M2
+    M2 --- OA
+    M2 --- OD
+    M2 --- OH
+    M2 --- OK
+    M2 --- OS
+    M2 --- OV
+
+    style Shopify fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
+    style Mapping fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style Odoo fill:#f3edf2,stroke:#714b67,color:#1a1a1a
+```
+
+| Mapping Type | Shopify Location | Odoo Location(s) | Use Case |
+|-------------|-----------------|-------------------|----------|
+| **Warehouse** (1:1) | Nettlager | WH/Stock | Standard warehouse fulfillment |
+| **Aggregated** (N:1) | Vendors | Ahlsell, Dahl, Heidenreich, Korsbakken, Sanipro, VikingBad `View/Stock` | Combined vendor stock for Dropship |
+
+> [!IMPORTANT]
+> **Aggregated mapping** is key for Dropship: Shopify shows one "Vendors" location, but Odoo tracks stock per-vendor separately. SYNC aggregates all vendor `View/Stock` quantities and pushes the combined total to Shopify's "Vendors" location.
+
+---
+
 ## Scenario 2 — Dropship Order
 
-> The order is fulfilled directly by a vendor — no warehouse stock is touched.
+> The order is fulfilled directly by a vendor — no warehouse stock is touched. Odoo uses vendor-specific locations to route the Purchase Order.
 
 ### Flow
 
@@ -152,42 +276,70 @@ sequenceDiagram
     participant Shopify
     participant SYNC
     participant Odoo
-    participant Vendor
+    participant Vendor as Vendor (e.g. Ahlsell)
 
     Customer->>Shopify: Places order
-    Note over Shopify: Assigns Dropship location
+    Note over Shopify: Product available at<br/>"Vendors" location
 
-    Shopify->>SYNC: Order payload<br/>(location_id = Dropship)
+    Shopify->>SYNC: Order payload<br/>(location = Vendors)
     SYNC->>SYNC: Maps payload +<br/>includes location_id
     SYNC->>Odoo: Creates Sale Order<br/>(with Dropship location)
 
     activate Odoo
-    Odoo->>Odoo: Detects Dropship location
-    Odoo->>Odoo: ⚠️ NO warehouse stock deducted
-    Odoo->>Odoo: Triggers Dropship flow
+    Note over Odoo: Detects Dropship route<br/>on the product
+
+    Odoo->>Odoo: NO warehouse stock deducted
+    Odoo->>Odoo: Dropship route triggers
+    Odoo->>Odoo: Finds vendor on product<br/>(e.g. Ahlsell)
     Odoo->>Vendor: Creates Purchase Order (PO)
+    Note over Odoo: Stock source:<br/>Ahlsell View/Stock
+
     Vendor-->>Customer: Ships directly
     deactivate Odoo
 
-    Note over Odoo: ✅ Vendor flow active, warehouse untouched
+    Note over Odoo: WH/Stock untouched
+```
+
+### Odoo Internal Routing (Dropship)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
+flowchart TD
+    SO["Sale Order\n(Dropship Route)"] --> ROUTE{"Product Route?"}
+    
+    ROUTE -->|"Dropship"| PO["Purchase Order\nCreated for Vendor"]
+    ROUTE -->|"Warehouse"| PICK["Warehouse Picking\n(WH/Stock)"]
+    
+    PO --> VENDOR_LOC["Vendor Location\n(e.g. Ahlsell View/Stock)"]
+    VENDOR_LOC --> SHIP["Ship Directly\nto Customer"]
+    
+    PICK --> WH_SHIP["Ship from\nWarehouse"]
+
+    style SO fill:#f3edf2,stroke:#714b67,color:#1a1a1a
+    style ROUTE fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style PO fill:#e8f4fd,stroke:#4a90d9,color:#1a1a1a
+    style PICK fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
+    style VENDOR_LOC fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style SHIP fill:#e8f4fd,stroke:#4a90d9,color:#1a1a1a
+    style WH_SHIP fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
 ```
 
 ### Roles
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Decides on Dropship location |
+| **Shopify** | Routes to "Vendors" location based on availability |
 | **SYNC** | Carries `location_id` to Odoo (critical!) |
-| **Odoo** | Executes Dropship / Vendor PO flow |
+| **Odoo** | Creates PO for specific vendor, uses vendor `View/Stock` location |
 
 > [!CAUTION]
-> If `location_id` is missing from the payload, Odoo defaults to Warehouse — causing **incorrect stock deductions**. This is the most common source of inventory mismatches.
+> If `location_id` is missing from the SYNC payload, Odoo defaults to Warehouse route — causing **incorrect stock deductions from WH/Stock** instead of triggering the vendor PO flow.
 
 ---
 
 ## Scenario 3 — Mixed Order (Warehouse + Dropship)
 
-> A single order contains items from both the warehouse and a dropship vendor.
+> A single order contains items from both the warehouse and one or more dropship vendors.
 
 ### Flow
 
@@ -197,12 +349,12 @@ sequenceDiagram
     participant Shopify
     participant SYNC
     participant Odoo
-    participant Vendor
+    participant Ahlsell as Vendor: Ahlsell
 
     Customer->>Shopify: Places order<br/>(mixed items)
-    Note over Shopify: Split fulfillment:<br/>Item A → Warehouse<br/>Item B → Dropship
+    Note over Shopify: Split fulfillment:<br/>Item A → Nettlager (WH)<br/>Item B → Vendors (Dropship)
 
-    Shopify->>SYNC: Order payload with<br/>fulfillments[].location_id<br/>or line-level locations
+    Shopify->>SYNC: Order payload with<br/>per-line location_id
 
     SYNC->>SYNC: Parses split information<br/>per line item
     SYNC->>Odoo: Creates Sale Order<br/>(with split location data)
@@ -210,37 +362,61 @@ sequenceDiagram
     activate Odoo
     rect rgb(234, 251, 231)
         Note over Odoo: Warehouse Flow (Item A)
-        Odoo->>Odoo: Reserve warehouse stock
-        Odoo->>Odoo: Create picking
+        Odoo->>Odoo: Reserve stock from WH/Stock
+        Odoo->>Odoo: Create picking (Nettlager)
     end
 
     rect rgb(255, 244, 224)
         Note over Odoo: Dropship Flow (Item B)
-        Odoo->>Odoo: No warehouse stock touched
-        Odoo->>Vendor: Create Purchase Order
-        Vendor-->>Customer: Ships directly
+        Odoo->>Odoo: No WH/Stock touched
+        Odoo->>Odoo: Find vendor for product<br/>(Ahlsell)
+        Odoo->>Ahlsell: Create Purchase Order
+        Note over Odoo: Source: Ahlsell View/Stock
+        Ahlsell-->>Customer: Ships directly
     end
 
     Odoo->>Odoo: Invoice & payment for full order
     deactivate Odoo
 ```
 
+### Split Routing Detail
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
+flowchart LR
+    subgraph Order ["Sale Order (Mixed)"]
+        L1["Line 1: Faucet\nRoute: Warehouse"]
+        L2["Line 2: Bathtub\nRoute: Dropship"]
+    end
+
+    subgraph Processing ["Odoo Processing"]
+        P1["Picking\nWH/Stock → Customer"]
+        P2["PO → Ahlsell\nAhlsell View/Stock → Customer"]
+    end
+
+    L1 --> P1
+    L2 --> P2
+
+    style Order fill:#f3edf2,stroke:#714b67,color:#1a1a1a
+    style Processing fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+```
+
 ### Roles
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Makes the split fulfillment decision per line |
-| **SYNC** | Carries split location data per item |
-| **Odoo** | Executes parallel Warehouse + Dropship flows |
+| **Shopify** | Splits fulfillment: Nettlager vs Vendors per line |
+| **SYNC** | Carries per-line `location_id` values faithfully |
+| **Odoo** | Routes each line: WH/Stock picking vs Vendor PO |
 
 > [!IMPORTANT]
-> The split is decided **entirely by Shopify**. SYNC must faithfully transport per-line `location_id` values. Odoo then routes each line accordingly.
+> The split is decided **entirely by Shopify**. SYNC must faithfully transport per-line `location_id` values. Odoo then routes each line to either `WH/Stock` (picking) or the appropriate vendor `View/Stock` (PO).
 
 ---
 
 ## Scenario 4 — Out of Stock → Backorder / Fallback
 
-> Warehouse stock is 0, but Dropship stock is available. Shopify routes to Dropship automatically.
+> Warehouse stock is 0, but vendor stock exists. Shopify routes to the "Vendors" location automatically.
 
 ### Flow
 
@@ -252,32 +428,68 @@ sequenceDiagram
     participant Odoo
 
     Customer->>Shopify: Places order
-    Note over Shopify: Warehouse stock = 0<br/>Dropship stock available
+
+    Note over Shopify: Nettlager (WH) stock = 0<br/>Vendors stock available<br/>(aggregated from Ahlsell,<br/>Dahl, Korsbakken, etc.)
 
     Shopify->>Shopify: Availability check
-    Note over Shopify: Decision: Route to Dropship
+    Note over Shopify: Decision: Route to Vendors
 
-    Shopify->>SYNC: Order payload<br/>(location_id = Dropship)
-    SYNC->>Odoo: Creates Sale Order<br/>(Dropship location)
+    Shopify->>SYNC: Order payload<br/>(location_id = Vendors)
+    SYNC->>Odoo: Creates Sale Order<br/>(Dropship route)
 
     activate Odoo
-    Odoo->>Odoo: ⚠️ Does NOT deduct<br/>warehouse stock
-    Odoo->>Odoo: Initiates Dropship flow
+    Odoo->>Odoo: WH/Stock NOT touched
+    Odoo->>Odoo: Detects Dropship route
+    Odoo->>Odoo: Finds vendor for product
+    Odoo->>Odoo: Creates PO for vendor<br/>(e.g. Korsbakken)
+    Note over Odoo: Source: Korsbakken View/Stock
     deactivate Odoo
 
-    Note over Odoo: ✅ Correct routing — no phantom stock loss
+    Note over Odoo: Correct routing — no phantom stock loss
+```
+
+### How Stock Availability Flows Back
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
+flowchart RL
+    subgraph Odoo ["Odoo (Stock Truth)"]
+        WH["WH/Stock = 0"]
+        V1["Ahlsell View/Stock = 15"]
+        V2["Dahl View/Stock = 8"]
+        V3["Korsbakken View/Stock = 22"]
+    end
+
+    subgraph SYNC_AGG ["SYNC Aggregation"]
+        AGG["Sum vendor stocks\n15 + 8 + 22 = 45"]
+    end
+
+    subgraph Shopify ["Shopify Display"]
+        SN["Nettlager: 0"]
+        SV["Vendors: 45"]
+    end
+
+    WH -->|"0"| SN
+    V1 --> AGG
+    V2 --> AGG
+    V3 --> AGG
+    AGG -->|"45"| SV
+
+    style Odoo fill:#f3edf2,stroke:#714b67,color:#1a1a1a
+    style SYNC_AGG fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style Shopify fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
 ```
 
 ### Roles
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Stock availability decision — routes to available location |
-| **SYNC** | Carries the routing decision (location_id) |
-| **Odoo** | Executes the correct operation based on location |
+| **Shopify** | Sees aggregated vendor stock, routes to "Vendors" when WH is empty |
+| **SYNC** | Aggregates per-vendor `View/Stock` → single "Vendors" quantity for Shopify |
+| **Odoo** | Maintains per-vendor stock truth, executes PO for correct vendor |
 
 > [!NOTE]
-> Shopify acts as the **availability arbiter**. Odoo trusts the `location_id` it receives and executes accordingly. This prevents phantom stock deductions from empty warehouses.
+> Shopify never knows *which* vendor has stock — it only sees the aggregated "Vendors" total. Odoo determines the specific vendor (Ahlsell, Dahl, etc.) based on the product's supplier configuration when creating the Purchase Order.
 
 ---
 
