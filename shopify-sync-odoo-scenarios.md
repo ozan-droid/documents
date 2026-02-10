@@ -26,6 +26,7 @@
 Each system in the pipeline has a single, well-defined responsibility:
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e8e8e8', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
 graph LR
     subgraph "📦 SHOPIFY"
         S["Order & Fulfillment\nDecision Center"]
@@ -44,7 +45,7 @@ graph LR
 
     style S fill:#96bf48,stroke:#5e8e3e,color:#1a1a1a
     style Y fill:#f5a623,stroke:#d4891a,color:#1a1a1a
-    style O fill:#714b67,stroke:#5a3a52,color:#1a1a1a
+    style O fill:#c9a5c0,stroke:#5a3a52,color:#1a1a1a
 ```
 
 | System | Role | Owns |
@@ -58,6 +59,7 @@ graph LR
 ## Architecture Overview
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
 flowchart TB
     Customer(("🛒 Customer")) --> Shopify
 
@@ -91,9 +93,9 @@ flowchart TB
     STK -.->|"Stock Sync"| TRANS
     TRANS -.->|"Inventory Levels"| Shopify
 
-    style Shopify fill:#eafbe7,stroke:#96bf48
-    style SYNC fill:#fff4e0,stroke:#f5a623
-    style Odoo fill:#f3edf2,stroke:#714b67
+    style Shopify fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
+    style SYNC fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style Odoo fill:#f3edf2,stroke:#714b67,color:#1a1a1a
 ```
 
 ---
@@ -351,11 +353,12 @@ sequenceDiagram
 ### Data Flow Direction
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
 flowchart LR
     Odoo["⚙️ Odoo\n(Stock Truth)"] -->|"Location-based\nstock levels"| SYNC["🔄 SYNC"]
     SYNC -->|"Inventory API"| Shopify["📦 Shopify\n(Customer View)"]
 
-    style Odoo fill:#714b67,stroke:#5a3a52,color:#1a1a1a
+    style Odoo fill:#c9a5c0,stroke:#5a3a52,color:#1a1a1a
     style SYNC fill:#f5a623,stroke:#d4891a,color:#1a1a1a
     style Shopify fill:#96bf48,stroke:#5e8e3e,color:#1a1a1a
 ```
@@ -378,6 +381,7 @@ flowchart LR
 The `location_id` is the **single most important field** in the entire integration. It determines which operational path Odoo executes.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
 flowchart TD
     LID{"location_id\npresent?"}
     
@@ -385,9 +389,9 @@ flowchart TD
     LID -->|"Yes: Dropship"| DS["Dropship Flow\n• No stock deducted\n• PO to vendor\n• Direct shipment"]
     LID -->|"❌ Missing"| ERR["⚠️ DEFAULT: Warehouse\n• WRONG stock deducted\n• Inventory mismatch\n• Manual correction needed"]
 
-    style WH fill:#eafbe7,stroke:#96bf48
-    style DS fill:#fff4e0,stroke:#f5a623
-    style ERR fill:#fde8e8,stroke:#e53e3e
+    style WH fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
+    style DS fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style ERR fill:#fde8e8,stroke:#e53e3e,color:#1a1a1a
 ```
 
 > [!CAUTION]
@@ -410,6 +414,7 @@ flowchart TD
 ---
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
 graph TB
     subgraph Legend
         direction LR
@@ -418,7 +423,7 @@ graph TB
 
     style A fill:#96bf48,stroke:#5e8e3e,color:#1a1a1a
     style B fill:#f5a623,stroke:#d4891a,color:#1a1a1a
-    style C fill:#714b67,stroke:#5a3a52,color:#1a1a1a
+    style C fill:#c9a5c0,stroke:#5a3a52,color:#1a1a1a
 ```
 
 > **Golden Rule:** Shopify decides, SYNC transports, Odoo executes.  
