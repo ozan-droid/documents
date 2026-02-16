@@ -14,10 +14,14 @@
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Order Created"] --> B{"Warehouse = Zero Stock?"}
-    B -- Yes --> C["Update Warehouse: Main"]
-    B -- No --> D["No Action"]
+graph TD
+    A["SO Created/Updated"] --> B{"Warehouse = Zero Stock?"}
+    B -- No --> Z["Keep Current Warehouse"]
+    B -- Yes --> C["Switch Warehouse to Main"]
+    C --> D["Recompute Availability/Allocation"]
+    D --> E{"Action Error?"}
+    E -- No --> F["Order continues in normal flow"]
+    E -- Yes --> G["Set status: Automatiseringsfeil + add note"]
 ```
 
 <br>
@@ -36,10 +40,17 @@ graph LR
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Order Created/Updated"] --> B{"Comments Empty?"}
-    B -- No --> C["Status: Review Needed (Med kundekommentar)"]
-    B -- Yes --> D["No Action"]
+graph TD
+    A["SO Created/Updated"] --> B{"x_sales_order_notes exists?"}
+    B -- No --> Z["No hold action"]
+    B -- Yes --> C["Add tag: Review Needed"]
+    C --> D["Create TODO activity: Review Order Notes"]
+    D --> E["User tries Confirm"]
+    E --> F{"Review Needed tag still present?"}
+    F -- Yes --> G["Hard block in action_confirm (cannot confirm)"]
+    F -- No --> H["SO can be confirmed"]
+    G --> I["Sales Manager runs: Release Order (CS)"]
+    I --> J["Remove tag + close activity + confirm order"]
 ```
 
 <br>
@@ -59,11 +70,16 @@ graph LR
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Sales Order Confirmed"] --> B{"Valid Channel & Warehouse?"}
-    B -- Yes --> C{"Status Valid?"}
-    C -- Yes --> D["Allocate Stock (Partial Allowed)"]
-    B -- No --> E["Skip"]
-    C -- No --> E
+    A["SO Confirmed"] --> B{"Channel=Shopify and Warehouse=Main?"}
+    B -- No --> X["Skip rule"]
+    B -- Yes --> C{"Order status allowed?"}
+    C -- No --> X
+    C -- Yes --> D{"Fulfillment not complete?"}
+    D -- No --> X
+    D -- Yes --> E["Reserve stock (partial allowed, no alt warehouse)"]
+    E --> F{"Allocation error?"}
+    F -- No --> G["SO stays in reservation flow"]
+    F -- Yes --> H["Set Automatiseringsfeil + order note"]
 ```
 
 <br>
@@ -83,10 +99,14 @@ graph TD
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Goods Received (PO)"] --> B{"Backorders Exist?"}
-    B -- Yes --> C["Check waiting Sales Orders"]
-    C --> D["Allocate Received Stock to Backorders"]
-    B -- No --> E["Put away to stock"]
+    A["PO Receipt (WH/IN) validated"] --> B["Update stock quants"]
+    B --> C{"Waiting SO demand exists?"}
+    C -- No --> D["Put away / keep as on-hand stock"]
+    C -- Yes --> E["Find eligible waiting reservations"]
+    E --> F["Allocate received qty to backorders (partial allowed)"]
+    F --> G{"Any qty allocated?"}
+    G -- Yes --> H["Related WH/OUT moves become ready/partially ready"]
+    G -- No --> I["Orders remain waiting for next receipt"]
 ```
 
 <br>
@@ -106,9 +126,15 @@ graph TD
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Stock Allocated"] --> B{"Paid & Valid Status?"}
-    B -- Yes --> C["Create Delivery Order"]
-    C --> D["Status: Reserved & Fulfilled"]
+    A["Picking state = Ready"] --> B{"BP-05 enabled?"}
+    B -- No (default) --> C["Manual warehouse validation"]
+    C --> D["Use native picking workflow"]
+    B -- Yes (pilot/fallback) --> E{"Paid + Shopify + not Nettlager?"}
+    E -- No --> F["Skip auto-validate"]
+    E -- Yes --> G["Set done qty and run button_validate"]
+    G --> H{"Validation succeeded?"}
+    H -- Yes --> I["Delivery marked done"]
+    H -- No --> J["Log error / investigate"]
 ```
 
 <br>
@@ -127,17 +153,14 @@ graph TD
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Order Created"] --> B{"Automation Category in Manual List?"}
-    B -- Yes --> C["Status: Bestilles manuelt"]
-    B -- No --> D["Normal Flow"]
-    
-    subgraph "Manual Categories"
-    M1["Montering"]
-    M2["Fabrics"]
-    M3["Custom Size"]
-    M4["Optional Color"]
-    end
+graph TD
+    A["SO lines contain automation categories"] --> B{"Manual categories matched?"}
+    B -- No --> C["Normal route flow"]
+    B -- Yes --> D{"Legacy BP-06 enabled?"}
+    D -- No (default) --> E["Apply route mapping via sync.automation.rule"]
+    E --> F["Use MTO/Manufacture/Buy execution"]
+    D -- Yes --> G["Tag/Status: Bestilles manuelt"]
+    G --> H["Manual planning queue"]
 ```
 
 <br>
@@ -156,10 +179,15 @@ graph LR
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Quote Sent"] --> B{"Payment Authorized?"}
-    B -- Yes --> C["Convert to Order"]
-    C --> D["Status: Ny ordre til godkjenning"]
+graph TD
+    A["Quotation in 'Pristilbud sendt'"] --> B{"Payment Authorized/Fully Paid?"}
+    B -- No --> C["Remain as quotation"]
+    B -- Yes --> D{"Workflow confirm_quotation enabled?"}
+    D -- No --> E["Wait for manual confirm"]
+    D -- Yes --> F["Run action_confirm"]
+    F --> G{"Review Needed tag exists?"}
+    G -- Yes --> H["Blocked until CS Release action"]
+    G -- No --> I["Sales Order confirmed"]
 ```
 
 <br>
@@ -178,9 +206,13 @@ graph LR
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Order Created"] --> B{"Carrier = Allierbygget?"}
-    B -- Yes --> C["Status: Bestilt til lager"]
+graph TD
+    A["SO Created/Updated"] --> B{"Carrier = Allierbygget (Bergen)?"}
+    B -- No --> C["Normal shipping queue"]
+    B -- Yes --> D{"BP-08 rule enabled?"}
+    D -- No (default) --> E["Use saved filter/group by carrier"]
+    E --> F["Warehouse processes queue operationally"]
+    D -- Yes --> G["Set status/tag: Bestilt til lager"]
 ```
 
 <br>
@@ -200,10 +232,13 @@ graph LR
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Order Created"] --> B{"Category = Dropship-Auto?"}
-    B -- Yes --> C["Create Drop-ship Purchase Order"]
-    C --> D["Email Supplier Immediately"]
-    D --> E["Status: Ordered"]
+    A["SO Confirmed"] --> B{"Product route includes Dropship-Auto?"}
+    B -- No --> C["Follow normal Buy/Stock flow"]
+    B -- Yes --> D{"Vendor configured on product?"}
+    D -- No --> E["Procurement exception / manual fix vendor"]
+    D -- Yes --> F["Odoo creates linked dropship PO (customer address)"]
+    F --> G["Confirm/send PO to vendor"]
+    G --> H["Track progress via linked SO/PO documents"]
 ```
 
 <br>
@@ -223,10 +258,14 @@ graph TD
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Order Created"] --> B{"Automation Category = Dropship-Manuell?"}
-    B -- Yes --> C["Create PO (Status: Chuck Norris)"]
-    C --> D["Do NOT Email Supplier"]
-    D --> E["Awaiting Manual Review"]
+    A["SO with Dropship-Manuell lines"] --> B{"BP-10 legacy rule enabled?"}
+    B -- No (default) --> C["Use mapped native route (Buy + Dropship)"]
+    C --> D["PO created by native procurement"]
+    D --> E["PO may enter Chuck lifecycle on confirm"]
+    B -- Yes --> F["Server action creates PO"]
+    F --> G["Set chuck_status = chuck_norris"]
+    G --> H["No immediate supplier email"]
+    H --> I["Manual or cron-based send to vendor"]
 ```
 
 <br>
@@ -245,8 +284,12 @@ graph TD
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Order Fulfilled (Dropship)"] --> B["Update Status: Direkte levering - bestilt"]
+graph TD
+    A["Dropship PO reaches purchase/ordered state"] --> B{"BP-11 rule enabled?"}
+    B -- No (default) --> C["No SO tag update"]
+    C --> D["Sales tracks progress via SO smart buttons + PO state"]
+    B -- Yes --> E["Write SO tag: Direkte levering - bestilt"]
+    E --> F["Visible legacy label on SO"]
 ```
 
 <br>
@@ -266,9 +309,13 @@ graph LR
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Order Created"] --> B{"Carrier = Service Point?"}
-    B -- Yes --> C{"Total < 1000?"}
-    C -- Yes --> D["Status: Bestilt til lager"]
+    A["SO Created/Updated"] --> B{"Carrier = Pakke til hentested?"}
+    B -- No --> C["Normal carrier flow"]
+    B -- Yes --> D{"Order total < 1000?"}
+    D -- No --> C
+    D -- Yes --> E{"BP-12 rule enabled?"}
+    E -- No (default) --> F["Use saved filter (carrier + amount)"]
+    E -- Yes --> G["Set status/tag: Bestilt til lager"]
 ```
 
 <br>
@@ -287,9 +334,15 @@ graph TD
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Shipment sent"] --> B{"Partial Shipment?"}
-    B -- Yes --> C["Status: Del-levert"]
+graph TD
+    A["Outgoing picking done"] --> B{"Other pickings for same SO still pending?"}
+    B -- No --> C["delivery_status becomes full"]
+    B -- Yes --> D{"BP-13 rule enabled?"}
+    D -- No (default) --> E["Use native delivery_status=partial"]
+    D -- Yes --> F["Add tag: Del-levert"]
+    C --> G["Close shipment flow"]
+    E --> G
+    F --> G
 ```
 
 <br>
@@ -309,10 +362,17 @@ graph LR
 ### Flow Diagram
 ```mermaid
 graph TD
-    A["Order Shipped"] --> B{"Fully Paid?"}
-    B -- Yes --> C["Create Invoice"]
-    C --> D["Post Invoice"]
-    D --> E["Email Invoice PDF"]
+    A["SO reaches invoice workflow conditions"] --> B{"BP-14 XML rule enabled?"}
+    B -- No (default) --> C["Use process_auto_workflow()"]
+    C --> D["Confirm SO if needed"]
+    D --> E["Create invoice"]
+    E --> F["Post invoice"]
+    F --> G{"Workflow register_payment enabled?"}
+    G -- Yes --> H["Register payment with workflow journal"]
+    G -- No --> I["Leave invoice posted/unpaid"]
+    H --> J["Set x_auto_invoice_status=done + chatter log"]
+    I --> J
+    B -- Yes (legacy) --> K["Run legacy server action path"]
 ```
 
 <br>
@@ -331,30 +391,33 @@ graph TD
 
 ### Flow Diagram
 ```mermaid
-graph LR
-    A["Order Created"] --> B{"Carrier = Mailbox?"}
-    B -- Yes --> C["Status: Bestilt til lager"]
+graph TD
+    A["SO Created/Updated"] --> B{"Carrier = Pakke i postkassen?"}
+    B -- No --> C["Normal shipping queue"]
+    B -- Yes --> D{"BP-15 rule enabled?"}
+    D -- No (default) --> E["Use saved filter/group by mailbox carrier"]
+    D -- Yes --> F["Set status/tag: Bestilt til lager"]
 ```
 
 <br>
 
 | Rule Name | Trigger | Conditions | Actions | Status | Odoo 19 Implementation Guide (Detailed) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **[BP-01] Zero stock to Main** | Sales Order | <ul><li>**Order warehouse** Is **Zero Stock warehouse**</li></ul> | <ul><li>**Update warehouse** to **Main warehouse**</li></ul> | ✅ **DONE** | **Native Configuration:**<br>1. Go to **Inventory > Configuration > Routes**.<br>2. Use Inter-warehouse/Resupply rules.<br>3. Set "Zero Stock" warehouse to resupply from "Main". |
-| **[BP-02] Has comments** | Sales Order | <ul><li>**Custom field** (Comments) **Is not** **Empty**</li></ul> | <ul><li>**Update status** to **Med kundekommentar**</li></ul> | ✅ **DONE** | **Custom Automation (XML):**<br>Implemented in `automation_rules.xml`.<br>1. Checks if `x_sales_order_notes` is set.<br>2. Adds tag "Review Needed".<br>3. Prevents confirmation until reviewed. |
-| **[BP-03] Auto Allocate** | Sales Order | <ul><li>**Channel** Is **bad.no(shopify)**</li><li>**Order warehouse** Is **Main Warehouse**</li><li>**Order status** Is not **Kansellert...**</li></ul> | <ul><li>**Allocate stock**</li></ul> | ✅ **DONE** | **Native Configuration (Verified):**<br>1. **Inventory > Operation Types > Delivery Orders**.<br>2. Reservation Method: **At Confirmation** (Confirmed in screenshot).<br>*(Stock is automatically reserved when SO is confirmed).* |
-| **[BP-04] Allocate after PO receipt** | Receiving goods | <ul><li>**Stock allocation** Is **No/Partial**</li></ul> | <ul><li>**Allocate stock**</li></ul> | ✅ **DONE** | **Native Configuration (Verified):**<br>1. Standard **Backorder** logic verified.<br>2. "Create Backorder: Ask" is enabled.<br>3. When `WH/IN` is done, Odoo automatically fulfills waiting backorders at `WH/OUT`. |
-| **[BP-05] Auto Fulfil** | Sales Order | <ul><li>**Payment** Is **Paid**</li><li>**Stock** Is **Allocated**</li></ul> | <ul><li>**Fulfill order**</li></ul> | ✅ **DONE** | **Custom Automation (XML):**<br>Implemented in `automation_rules.xml`.<br>1. Trigger: When Delivery becomes "Ready".<br>2. Condition: If SO is Paid & Shopify.<br>3. Action: Auto-Validates the picking. |
-| **[BP-06] Bestilles manuelt** | Sales Order | <ul><li>**Automation Category** Is **Montering, Metervare...**</li></ul> | <ul><li>**Update status** to **Bestilles manuelt**</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use **Make to Order (MTO)** or **Manufacture** routes.<br>Odoo will automatically generate a Manufacturing Order (MO) or PO for assembly/custom products. No need for a manual tag. |
-| **[BP-07] Authorized Quote** | Sales Order | <ul><li>**Order status** Is **Pristilbud sendt**</li><li>**Payment** Is **Paid**</li></ul> | <ul><li>**Update status** to **Ny ordre til godkjenning**</li></ul> | ✅ **DONE** | **Native Logic:**<br>Odoo naturally converts Quotation -> Sales Order upon confirmation/payment. No extra rule needed. |
-| **[BP-08] Allierbygget - Ny ordre...** | Sales Order | <ul><li>**Shipping** Is **Allierbygget (Bergen)**</li></ul> | <ul><li>**Update status** to **Bestilt til lager**</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use **Filters** or **Group By Carrier** in Sales Order List View.<br>*(Tagged for visibility, but rule is now disabled)*. |
-| **[BP-09] Dropship Auto** | Sales Order | <ul><li>**Automation Category** Is **Dropship-Auto**</li></ul> | <ul><li>**Advanced fulfilment** (Dropship)</li></ul> | ✅ **DONE** | **Native Configuration:**<br>1. Configure Product -> Inventory Tab -> Routes: **Dropship**.<br>2. Set Vendor on Product.<br>3. Odoo automatically creates RFQ linked to Customer Address. |
-| **[BP-10] Dropship Manuell** | Sales Order | <ul><li>**Automation Category** Is **Dropship-Manuell**</li></ul> | <ul><li>**Create PO** (Chuck Norris status)</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use Native **Dropship Route**.<br>See "Transition Guide" below for details. |
-| **[BP-11] Ny ordre... Direkte Levering** | Sales Order | <ul><li>**Dropship PO** Is **Confirmed**</li></ul> | <ul><li>**Update status** to **Direkte levering...**</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use **Smart Buttons** on SO to see related Purchase Orders.<br>*(Tagging is redundant)*. |
-| **[BP-12] Pakke til hentested < 1000** | Sales Order | <ul><li>**Shipping** Is **Pickup** AND **< 1000**</li></ul> | <ul><li>**Update status** to **Bestilt til lager**</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use **Group By Carrier** in List View. |
-| **[BP-13] Partially shipped** | Sales Order | <ul><li>**Shipping** Is **Partial**</li></ul> | <ul><li>**Update status** to **Del-levert**</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use native **`delivery_status`** field (Filtering options: Partial, Shipped). |
-| **[BP-14] Auto invoice** | Sales Order | <ul><li>**Shipped** AND **Paid**</li></ul> | <ul><li>**Invoice order**</li></ul> | 📦 **ARCHIVED** | **Native Integration:**<br>Replaced by **Sale Auto Workflow** model (Emipro-style).<br>Configured in **SYNC > Configuration > Sale Auto Workflow**.<br>1. Auto-Confirm.<br>2. Auto-Invoice & Validate.<br>3. Auto-Register Payment. |
-| **[BP-15] Pakke i postkassen** | Sales Order | <ul><li>**Shipping** Is **Mailbox**</li></ul> | <ul><li>**Update status** to **Bestilt til lager**</li></ul> | 📦 **ARCHIVED** | **Native Alternative:**<br>Use **Group By Carrier** in List View. |
+| **[BP-01] Zero stock to Main** | Sales Order | <ul><li>**Order warehouse** Is **Zero Stock warehouse**</li></ul> | <ul><li>**Update warehouse** to **Main warehouse**</li></ul> | ✅ **DONE** | **Native Odoo 19 (no custom rule):**<br>1. Configure warehouse resupply path (**Inventory > Configuration > Warehouses/Routes**) from Zero Stock to Main.<br>2. Keep pull rules active for internal replenishment.<br>3. Validate with a test SO on Zero Stock and check internal transfer chain.<br>**Why better:** route engine is deterministic and auditable without status tags. |
+| **[BP-02] Has comments** | Sales Order | <ul><li>**Custom field** (Comments) **Is not** **Empty**</li></ul> | <ul><li>**Update status** to **Med kundekommentar**</li></ul> | ✅ **DONE** | **Active custom control (code-backed):**<br>1. `automation_rules.xml` rule `[BP-02] Hold Order` is active and tags order when `x_sales_order_notes` exists.<br>2. `sale_order.py` overrides `action_confirm` and hard-blocks confirm while `Review Needed` tag exists.<br>3. CS releases via server action `[BP-02] Release Order (CS)` (manager-only), which removes tag and confirms.<br>**Result:** stronger than BP because bypass via direct confirm is blocked in code. |
+| **[BP-03] Auto Allocate** | Sales Order | <ul><li>**Channel** Is **bad.no(shopify)**</li><li>**Order warehouse** Is **Main Warehouse**</li><li>**Order status** Is not **Kansellert...**</li></ul> | <ul><li>**Allocate stock**</li></ul> | ✅ **DONE** | **Native reservation policy:**<br>1. Set Delivery Operation Type reservation to **At Confirmation**.<br>2. On SO confirm, Odoo reserves available stock automatically.<br>3. Use standard exceptions (`waiting`, `partially_available`) instead of custom statuses.<br>**Why better:** less race condition risk than timer-based BP checks. |
+| **[BP-04] Allocate after PO receipt** | Receiving goods | <ul><li>**Stock allocation** Is **No/Partial**</li></ul> | <ul><li>**Allocate stock**</li></ul> | ✅ **DONE** | **Native inbound-driven reallocation:**<br>1. Receive PO (`WH/IN`) normally.<br>2. Odoo updates quants and automatically re-evaluates waiting outbound pickings/backorders.<br>3. Warehouse confirms backorder behavior via operation type settings.<br>**Why better:** single inventory engine handles both receipt and reservation consistency. |
+| **[BP-05] Auto Fulfil** | Sales Order | <ul><li>**Payment** Is **Paid**</li><li>**Stock** Is **Allocated**</li></ul> | <ul><li>**Fulfill order**</li></ul> | 📦 **ARCHIVED** | **Current production stance: disabled by design.**<br>1. Rule exists in `automation_rules.xml` but `active=False`.<br>2. Primary flow is manual warehouse validation to avoid phantom shipping/compliance risk.<br>3. If needed, re-enable only for pilot scope and monitor chatter/logs + healthcheck query #8.<br>**Why better now:** controlled risk vs unconditional auto-validate. |
+| **[BP-06] Bestilles manuelt** | Sales Order | <ul><li>**Automation Category** Is **Montering, Metervare...**</li></ul> | <ul><li>**Update status** to **Bestilles manuelt**</li></ul> | 📦 **ARCHIVED** | **Replaced by route-based execution model:**<br>1. Category-to-route mapping is managed by `sync.automation.rule` (+ default data in `sync_automation_rule_data.xml`).<br>2. Product routes are applied during sync in `product_template.py`.<br>3. Use MTO/Manufacture/Buy routes instead of manual status tags.<br>**Why better:** real procurement behavior is automated, not just visual tagging. |
+| **[BP-07] Authorized Quote** | Sales Order | <ul><li>**Order status** Is **Pristilbud sendt**</li><li>**Payment** Is **Paid**</li></ul> | <ul><li>**Update status** to **Ny ordre til godkjenning**</li></ul> | ✅ **DONE** | **Handled through workflow + native confirm:**<br>1. `process_auto_workflow()` confirms quotation when workflow says `confirm_quotation=True`.<br>2. Payment/financial status comes from order webhook mapping.<br>3. If workflow not matched, native manual confirm remains available.<br>**Why better:** behavior is centrally configured in workflow, not duplicated in many automations. |
+| **[BP-08] Allierbygget - Ny ordre...** | Sales Order | <ul><li>**Shipping** Is **Allierbygget (Bergen)**</li></ul> | <ul><li>**Update status** to **Bestilt til lager**</li></ul> | 📦 **ARCHIVED** | **Operationalized as views, not status mutation:**<br>1. Keep rule archived (`active=False`).<br>2. Create saved filters/grouping by `carrier_id` for warehouse queue management.<br>3. Re-enable tag rule only if business explicitly needs legacy label semantics.<br>**Why better:** avoids redundant status writes and keeps carrier truth in one field. |
+| **[BP-09] Dropship Auto** | Sales Order | <ul><li>**Automation Category** Is **Dropship-Auto**</li></ul> | <ul><li>**Advanced fulfilment** (Dropship)</li></ul> | ✅ **DONE** | **Native dropship with enforced route mapping:**<br>1. `sync_automation_rule_data.xml` maps Dropship-Auto to Buy + Dropship + MTO routes.<br>2. Ensure vendor is set on product.<br>3. SO confirmation creates linked PO to customer destination via native dropship flow.<br>**Why better:** native traceability across SO/PO/picking without custom status orchestration. |
+| **[BP-10] Dropship Manuell** | Sales Order | <ul><li>**Automation Category** Is **Dropship-Manuell**</li></ul> | <ul><li>**Create PO** (Chuck Norris status)</li></ul> | 📦 **ARCHIVED** | **Primary path switched to native/hybrid:**<br>1. BP-10 automation in `automation_rules.xml` is archived (`active=False`).<br>2. Dropship-Manuell route is mapped by `sync_automation_rule_data.xml` (Buy + Dropship).<br>3. PO-level Chuck lifecycle is handled in `chuck_integration` (`button_confirm`, `chuck_status`, cron auto-send) when enabled.<br>**Fallback:** BP-10 can be re-enabled only for controlled legacy parity. |
+| **[BP-11] Ny ordre... Direkte Levering** | Sales Order | <ul><li>**Dropship PO** Is **Confirmed**</li></ul> | <ul><li>**Update status** to **Direkte levering...**</li></ul> | 📦 **ARCHIVED** | **Replaced by native relational visibility:**<br>1. Archived tag rule is not required for core flow.<br>2. Sales users follow PO progress from SO smart buttons/linked documents.<br>3. Chuck statuses (`ordered`, `ob_confirmed`, `delivered`, etc.) provide vendor lifecycle state on PO itself.<br>**Why better:** operational truth stays on PO lifecycle, not duplicated on SO tag. |
+| **[BP-12] Pakke til hentested < 1000** | Sales Order | <ul><li>**Shipping** Is **Pickup** AND **< 1000**</li></ul> | <ul><li>**Update status** to **Bestilt til lager**</li></ul> | 📦 **ARCHIVED** | **Handled as operational filter:**<br>1. Keep archived rule disabled by default.<br>2. Build saved filter domain on SO list for pickup carrier + amount threshold.<br>3. Use dashboard/list views for queue actions instead of status-tag mutation.<br>**Why better:** cleaner data model and easier threshold changes without server action edits. |
+| **[BP-13] Partially shipped** | Sales Order | <ul><li>**Shipping** Is **Partial**</li></ul> | <ul><li>**Update status** to **Del-levert**</li></ul> | 📦 **ARCHIVED** | **Use native delivery state:**<br>1. `delivery_status` on SO gives partial/full/no delivery state natively.<br>2. Archived tag automation remains fallback only.<br>3. Warehouse/service teams should filter by native `delivery_status` field in views/reports.<br>**Why better:** no duplicate logic between pickings and sales tags. |
+| **[BP-14] Auto invoice** | Sales Order | <ul><li>**Shipped** AND **Paid**</li></ul> | <ul><li>**Invoice order**</li></ul> | 📦 **ARCHIVED** | **Moved to workflow engine + model logic:**<br>1. XML BP-14 automation is archived (`active=False`).<br>2. `process_auto_workflow()` handles confirm, invoice creation, posting, and payment registration based on workflow config.<br>3. Configure in SYNC workflow settings and verify `x_auto_invoice_status` + chatter logs.<br>**Why better:** one configurable engine for all channels instead of fragile per-rule code paths. |
+| **[BP-15] Pakke i postkassen** | Sales Order | <ul><li>**Shipping** Is **Mailbox**</li></ul> | <ul><li>**Update status** to **Bestilt til lager**</li></ul> | 📦 **ARCHIVED** | **Handled as carrier-based operation queue:**<br>1. Keep archived rule disabled by default.<br>2. Use saved filter/group by `carrier_id` for mailbox shipments.<br>3. Re-enable legacy tag rule only if explicit reporting need cannot be met with native fields.<br>**Why better:** keeps shipping method as source of truth, avoids status inflation. |
 
 ---
 
@@ -375,7 +438,7 @@ Based on Odoo 19 analysis, the following rules are missing or strongly recommend
 The following rules have been analyzed for code quality and native feature parity.
 
 ### [BP-06] Bestilles manuelt (Refactored)
-*   **Status:** ✅ Refactored to Robust Logic
+*   **Status:** ✅ Refactored logic exists, but automation is archived/inactive by default
 *   **Old Logic (Brittle):** Relied on matching text `Category Name` (e.g., "Montering"). Renaming a category broke the rule.
 *   **New Logic (Robust):** Now matches `x_automation_categ_ids.code` (e.g., `414`).
 *   **Benefit:** Categories can be renamed freely in the Odoo UI without breaking automation.
@@ -452,7 +515,7 @@ The following rules have been analyzed for code quality and native feature parit
 | Trigger | Condition | Action | Source |
 | :--- | :--- | :--- | :--- |
 | New Order / Update | `x_sales_order_notes` != False | Tag: "Review Needed" | `automation_rules.xml` |
-| SO Confirm | Category == "Dropship-Manuell" | Create PO (Chuck Norris) | `automation_rules.xml` |
+| SO Confirm | Category == "Dropship-Manuell" | Optional: Create PO (Chuck Norris) only if BP-10 is re-enabled | `automation_rules.xml` (BP-10, Disabled) |
 | SO Confirm | Paid or Authorized | Auto-Confirm Order | `sale_order.py` |
 | Delivery Ready | Paid + Shopify + Stock | Auto-Validate Delivery | `automation_rules.xml` (BP-05, Disabled) |
 | Delivery Done | Source = Shopify | Trigger Payment Capture | `stock_picking.py` |
