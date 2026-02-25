@@ -1,7 +1,7 @@
 # Shopify ↔ SYNC ↔ Odoo — Scenario-Based Integration Guide
 
-> **Version:** 1.0  
-> **Date:** 2026-02-10  
+> **Version:** 1.1  
+> **Date:** 2026-02-25  
 > **Audience:** Developers, Integration Architects, Operations Team
 
 ---
@@ -51,8 +51,8 @@ graph LR
 | System | Role | Owns |
 |--------|------|------|
 | **Shopify** | Order & Fulfillment Decision Center | Customer data, payment, location selection |
-| **SYNC** | Data Carrier & Transformer | Payload mapping, field cleaning, format conversion |
-| **Odoo** | Operations & Accounting Engine | Stock movements, picking, invoicing, payments |
+| **SYNC** | Data Carrier | Payload delivery, format conversion (Pass-through) |
+| **Odoo** | Mapping Engine & Operations | Location mapping (`sync.shopify.location`), stock moves, invoicing |
 
 ---
 
@@ -151,7 +151,7 @@ Shopify has a flat list of locations. Each represents a fulfillment point:
 | Shopify Location | Purpose |
 |-----------------|---------|
 | **Allierbygget (Bergen)** | **Main Warehouse** — physical stock (primary) |
-| **Nettlager** | **Dropship** — aggregated vendor stock |
+| **Nettlager** | **Dropship pool** — aggregated vendor stock for direct vendor shipment |
 
 ### Odoo Side: Vendor Locations (Detailed)
 
@@ -212,7 +212,10 @@ flowchart TB
 | **Sanipro** | `View/Stock` / `View/Quarantine` | Same pattern |
 | **VikingBad** | `View/Stock` / `View/Quarantine` | Same pattern |
 
-### Shopify ↔ Odoo Location Mapping (via `sync.shopify.location`)
+### Shopify ↔ Odoo Location Mapping (Handled in Odoo via `sync.shopify.location`)
+
+> [!NOTE]
+> **Mapping Logic:** The mapping configuration resides entirely within Odoo. SYNC simply passes the Shopify Location ID, and Odoo looks up the corresponding `sync.shopify.location` record to determine the target stock location.
 
 The mapping model supports two types:
 
@@ -259,7 +262,8 @@ flowchart LR
 | **Aggregated** (N:1) | **Nettlager** | Ahlsell, Dahl, Heidenreich, Korsbakken, Sanipro, VikingBad `View/Stock` | Combined vendor stock for Dropship |
 
 > [!IMPORTANT]
-> **Aggregated mapping** is key for Dropship: Shopify shows one "Nettlager" location, but Odoo tracks stock per-vendor separately. SYNC aggregates all vendor `View/Stock` quantities and pushes the combined total to Shopify's "Nettlager" location.
+> **Aggregated mapping** is key for Dropship: Shopify shows one "Nettlager" location, but Odoo tracks stock per-vendor separately. SYNC aggregates all vendor `View/Stock` quantities and pushes the combined total to Shopify's "Nettlager" location.  
+> **Scope boundary:** Nettlager is for direct Dropship flow (vendor → customer). It is **not** the fallback target for Main Warehouse backorders.
 
 ---
 
@@ -280,9 +284,10 @@ sequenceDiagram
     Customer->>Shopify: Places order
     Note over Shopify: Product available at<br/>"Nettlager" (Dropship)
 
-    Shopify->>SYNC: Order payload<br/>(location = Nettlager)
-    SYNC->>SYNC: Maps payload +<br/>includes location_id
-    SYNC->>Odoo: Creates Sale Order<br/>(with Dropship location)
+    Shopify->>SYNC: Order payload<br/>(location_id = Nettlager ID)
+    SYNC->>SYNC: Transfers payload +<br/>Shopify Location ID
+    SYNC->>Odoo: Creates Sale Order<br/>(with Location ID)
+    Odoo->>Odoo: Maps Location ID<br/>to Odoo Stock Location
 
     activate Odoo
     Note over Odoo: Detects Dropship route<br/>on the product
@@ -353,10 +358,11 @@ sequenceDiagram
     Customer->>Shopify: Places order (mixed items)
     Note over Shopify: Split fulfillment:<br/>Item A → Allierbygget (WH)<br/>Item B → Nettlager (Dropship)
 
-    Shopify->>SYNC: Order payload with<br/>per-line location_id
+    Shopify->>SYNC: Order payload with<br/>mixed fulfillment context
 
-    SYNC->>SYNC: Parses split information<br/>per line item
-    SYNC->>Odoo: Creates Sale Order<br/>(with split location data)
+    SYNC->>SYNC: Passes location + route context
+    SYNC->>Odoo: Creates Sale Order
+    Odoo->>Odoo: Applies location mapping + product routes
 
     activate Odoo
     Note right of Odoo: --- WAREHOUSE FLOW (Item A) ---
@@ -401,18 +407,18 @@ flowchart LR
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Splits fulfillment: Nettlager vs Vendors per line |
-| **SYNC** | Carries per-line `location_id` values faithfully |
-| **Odoo** | Routes each line: WH/Stock picking vs Vendor PO |
+| **Shopify** | Provides mixed fulfillment intent (warehouse + dropship) |
+| **SYNC** | Carries location/routing context to Odoo |
+| **Odoo** | Executes per-line flow via product routes: WH/Stock picking vs Vendor PO |
 
 > [!IMPORTANT]
-> The split is decided **entirely by Shopify**. SYNC must faithfully transport per-line `location_id` values. Odoo then routes each line to either `WH/Stock` (picking) or the appropriate vendor `View/Stock` (PO).
+> For mixed orders, `location_id` helps determine warehouse context, but line-level execution in Odoo is still driven by product routes and vendor configuration. Do not assume per-line `location_id` routing unless explicitly implemented end-to-end.
 
 ---
 
 ## Scenario 4 — Out of Stock → Backorder / Fallback
 
-> Warehouse stock is 0, but vendor stock exists. Shopify routes to the "Nettlager" location automatically.
+> Main Warehouse stock is 0. Order remains on Main Warehouse and is fulfilled through backorder (PO to warehouse, then pick/pack/ship).
 
 ### Flow
 
@@ -425,23 +431,24 @@ sequenceDiagram
 
     Customer->>Shopify: Places order
 
-    Note over Shopify: Allierbygget (WH) stock = 0<br/>Nettlager stock available<br/>(aggregated from Ahlsell,<br/>Dahl, Korsbakken, etc.)
+    Note over Shopify: Allierbygget (WH) stock = 0<br/>Backorder policy allows checkout
 
     Shopify->>Shopify: Availability check
-    Note over Shopify: Decision: Route to Nettlager
+    Note over Shopify: Decision: Keep Main Warehouse<br/>(do not reroute to Nettlager)
 
-    Shopify->>SYNC: Order payload<br/>(location_id = Nettlager)
-    SYNC->>Odoo: Creates Sale Order<br/>(Dropship route)
+    Shopify->>SYNC: Order payload<br/>(location_id = Allierbygget)
+    SYNC->>Odoo: Creates Sale Order<br/>(Main Warehouse context)
 
     activate Odoo
-    Odoo->>Odoo: WH/Stock NOT touched
-    Odoo->>Odoo: Detects Dropship route
-    Odoo->>Odoo: Finds vendor for product
-    Odoo->>Odoo: Creates PO for vendor<br/>(e.g. Korsbakken)
-    Note over Odoo: Source: Korsbakken View/Stock
+    Odoo->>Odoo: Reservation fails/partial (WH stock = 0)
+    Odoo->>Odoo: Creates RFQ/PO for replenishment
+    Odoo->>Vendor: PO destination = Main Warehouse (WH/IN)
+    Vendor-->>Odoo: Deliver to warehouse
+    Odoo->>Odoo: Receive PO, allocate to waiting SO/backorder
+    Odoo->>Odoo: Pick/pack/ship from Main Warehouse
     deactivate Odoo
 
-    Note over Odoo: Correct routing — no phantom stock loss
+    Note over Odoo: Correct backorder path — PO goes to warehouse first
 ```
 
 ### How Stock Availability Flows Back
@@ -451,28 +458,28 @@ sequenceDiagram
 flowchart RL
     subgraph Odoo ["Odoo (Stock Truth)"]
         WH["WH/Stock = 0"]
-        V1["Ahlsell View/Stock = 15"]
-        V2["Dahl View/Stock = 8"]
-        V3["Korsbakken View/Stock = 22"]
+        PIN["Incoming PO to WH = 25"]
+        BO["SO Backorder Queue = 5"]
     end
 
-    subgraph SYNC_AGG ["SYNC Aggregation"]
-        AGG["Sum vendor stocks\n15 + 8 + 22 = 45"]
+    subgraph SYNC_FLOW ["SYNC Publication"]
+        PUB["Publish Main Warehouse\navailable quantity"]
     end
 
     subgraph Shopify ["Shopify Display"]
-        SA["Allierbygget: 0"]
-        SN["Nettlager: 45"]
+        SA["Allierbygget: 0 (before receipt)"]
+        SA2["Allierbygget: updated after receipt"]
     end
 
-    WH -->|"0"| SA
-    V1 --> AGG
-    V2 --> AGG
-    V3 --> AGG
-    AGG -->|"45"| SN
+    WH -->|"available now"| PUB
+    PUB --> SA
+    PIN -->|"receipt"| WH
+    BO -->|"allocated from receipt"| PIN
+    WH -->|"after receipt sync"| PUB
+    PUB --> SA2
 
     style Odoo fill:#f3edf2,stroke:#714b67,color:#1a1a1a
-    style SYNC_AGG fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
+    style SYNC_FLOW fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
     style Shopify fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
 ```
 
@@ -480,12 +487,13 @@ flowchart RL
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Sees aggregated vendor stock, routes to "Vendors" when WH is empty |
-| **SYNC** | Aggregates per-vendor `View/Stock` → single "Vendors" quantity for Shopify |
-| **Odoo** | Maintains per-vendor stock truth, executes PO for correct vendor |
+| **Shopify** | Keeps Main Warehouse location for backorderable items |
+| **SYNC** | Carries Main Warehouse location + order payload |
+| **Odoo** | Executes backorder: PO to warehouse, receipt, allocation, shipment |
 
 > [!NOTE]
-> Shopify never knows *which* vendor has stock — it only sees the aggregated "Vendors" total. Odoo determines the specific vendor (Ahlsell, Dahl, etc.) based on the product's supplier configuration when creating the Purchase Order.
+> `Nettlager` is still valid for **direct dropship scenarios** (Scenario 2/3).  
+> For **Main Warehouse backorder**, routing to Nettlager is a policy error because it bypasses warehouse receipt and packaging.
 
 ---
 
@@ -586,16 +594,18 @@ flowchart LR
 
 ## Critical Field: `location_id`
 
-The `location_id` is the **single most important field** in the entire integration. It determines which operational path Odoo executes.
+`location_id` is a critical routing input, but not the only one.  
+In Odoo, final execution is determined by `location_id` **plus** product routes (`Buy`, `MTO`, `Dropship`) and vendor setup.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
 flowchart TD
-    LID{"location_id\npresent?"}
+    LID{"location_id\nmapped?"}
     
-    LID -->|"Yes: Warehouse"| WH["Warehouse Flow\n• Stock reserved\n• Picking created\n• Standard shipment"]
-    LID -->|"Yes: Dropship"| DS["Dropship Flow\n• No stock deducted\n• PO to vendor\n• Direct shipment"]
-    LID -->|"❌ Missing"| ERR["⚠️ DEFAULT: Warehouse\n• WRONG stock deducted\n• Inventory mismatch\n• Manual correction needed"]
+    LID -->|"Yes"| ROUTE{"Product Route + Policy?"}
+    ROUTE -->|"Warehouse + Buy/MTO"| WH["Backorder/Warehouse Flow\n• Wait/partial reserve\n• PO to Main WH\n• Receive → allocate → ship"]
+    ROUTE -->|"Dropship"| DS["Dropship Flow\n• No WH stock deduction\n• PO to vendor\n• Direct shipment"]
+    LID -->|"❌ No"| ERR["⚠️ Routing risk\n• Wrong warehouse context\n• Wrong PO destination\n• Manual correction needed"]
 
     style WH fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
     style DS fill:#fff4e0,stroke:#f5a623,color:#1a1a1a
@@ -603,8 +613,8 @@ flowchart TD
 ```
 
 > [!CAUTION]
-> **Missing `location_id` = Silent Data Corruption.**  
-> Odoo will not raise an error — it will silently default to Warehouse, causing stock discrepancies that are difficult to trace after the fact.
+> **Missing/wrong `location_id` + wrong route config = silent operational drift.**  
+> Symptoms: wrong warehouse context, incorrect PO destination, or stock discrepancies discovered late.
 
 ---
 
@@ -614,8 +624,8 @@ flowchart TD
 |----------|----------------|-------------|---------------|
 | **1. Warehouse** | Warehouse location | Mapped payload | Stock ↓ + Picking + Invoice |
 | **2. Dropship** | Dropship location | `location_id` | Vendor PO (no stock ↓) |
-| **3. Mixed** | Split fulfillment | Per-line locations | Parallel WH + DS flows |
-| **4. Backorder** | Availability routing | Location decision | Correct flow per location |
+| **3. Mixed** | Mixed intent (WH + Dropship) | Location + route context | Parallel WH + DS flows (route-driven) |
+| **4. Backorder** | Backorder accepted on Main WH | Main WH location + order data | PO to WH → receipt → allocate backorder → ship |
 | **5. Refund** | Refund event | `refunds[]` payload | Credit Note + Return |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
 
@@ -635,4 +645,4 @@ graph TB
 ```
 
 > **Golden Rule:** Shopify decides, SYNC transports, Odoo executes.  
-> `location_id` is the bridge that ensures the right decision reaches the right operation.
+> `location_id` + product routes together ensure the right decision reaches the right operation.
