@@ -52,7 +52,7 @@ graph LR
 |--------|------|------|
 | **Shopify** | Order & Fulfillment Decision Center | Customer data, payment, location selection |
 | **SYNC** | Data Carrier | Payload delivery, format conversion (Pass-through) |
-| **Odoo** | Mapping Engine & Operations | Location mapping (`sync.shopify.location`), stock moves, invoicing |
+| **Odoo** | Mapping Engine & Operations | Location mapping (`sync.shopify.location`), stock moves, routing, invoicing |
 
 ---
 
@@ -124,7 +124,7 @@ sequenceDiagram
     Odoo->>Odoo: Confirms order
     Odoo->>Odoo: Warehouse stock reserved
     Odoo->>Odoo: Picking created
-    Odoo->>Odoo: Invoice & payment processed
+    Odoo->>Odoo: Invoice & payment processed (if workflow enabled)
     deactivate Odoo
 
     Note over Odoo: ✅ Stock decremented from Allierbygget
@@ -136,7 +136,10 @@ sequenceDiagram
 |--------|---------------|
 | **Shopify** | Selects Allierbygget (Bergen) location + order source of truth |
 | **SYNC** | Correct field mapping & payload delivery |
-| **Odoo** | Stock reservation, picking, invoicing, payment |
+| **Odoo** | Stock reservation, picking, invoicing (and payment if workflow enabled) |
+
+> [!NOTE]
+> Invoicing/payment automation depends on configured workflow policies, not only on location.
 
 ---
 
@@ -215,7 +218,7 @@ flowchart TB
 ### Shopify ↔ Odoo Location Mapping (Handled in Odoo via `sync.shopify.location`)
 
 > [!NOTE]
-> **Mapping Logic:** The mapping configuration resides entirely within Odoo. SYNC simply passes the Shopify Location ID, and Odoo looks up the corresponding `sync.shopify.location` record to determine the target stock location.
+> **Mapping Logic:** The mapping configuration resides entirely within Odoo. SYNC passes Shopify location identifiers, and Odoo resolves the mapped location context (`warehouse` or `aggregated`) for routing/stock sync decisions.
 
 The mapping model supports two types:
 
@@ -286,8 +289,8 @@ sequenceDiagram
 
     Shopify->>SYNC: Order payload<br/>(location_id = Nettlager ID)
     SYNC->>SYNC: Transfers payload +<br/>Shopify Location ID
-    SYNC->>Odoo: Creates Sale Order<br/>(with Location ID)
-    Odoo->>Odoo: Maps Location ID<br/>to Odoo Stock Location
+    SYNC->>Odoo: Creates Sale Order<br/>(with Location context)
+    Odoo->>Odoo: Resolves mapping + product route policy
 
     activate Odoo
     Note over Odoo: Detects Dropship route<br/>on the product
@@ -337,7 +340,7 @@ flowchart TD
 | **Odoo** | Creates PO for specific vendor, uses vendor `View/Stock` location |
 
 > [!CAUTION]
-> If `location_id` is missing from the SYNC payload, Odoo defaults to Warehouse route — causing **incorrect stock deductions from WH/Stock** instead of triggering the vendor PO flow.
+> If `location_id` is missing or wrong, and product route policy is not strict dropship, Odoo can drift into the wrong operational path (for example warehouse flow), causing stock/fulfillment mismatches.
 
 ---
 
@@ -377,7 +380,7 @@ sequenceDiagram
     Ahlsell-->>Customer: Ships directly
 
     Note right of Odoo: --- COMMON ---
-    Odoo->>Odoo: Invoice and payment for full order
+    Odoo->>Odoo: Invoice and payment for full order (according to workflow settings)
     deactivate Odoo
 ```
 
@@ -525,7 +528,7 @@ sequenceDiagram
         Odoo->>Odoo: Stock re-added to inventory
     end
 
-    Odoo->>Odoo: Reconciles payment
+    Odoo->>Odoo: Reconciles payment (if refund payment registration is enabled)
     deactivate Odoo
 
     Note over Odoo: ✅ Credit note + optional stock return
@@ -537,7 +540,10 @@ sequenceDiagram
 |--------|---------------|
 | **Shopify** | Initiates and processes the refund event |
 | **SYNC** | Carries `refunds[]` payload to Odoo |
-| **Odoo** | Creates credit note, optional return picking, payment reconciliation |
+| **Odoo** | Creates credit note, optional return picking, optional payment reconciliation |
+
+> [!NOTE]
+> Default config is typically: Auto-Refund = enabled, Auto-Return = disabled, Register Payment for Credit Note = disabled.
 
 ---
 
@@ -626,7 +632,7 @@ flowchart TD
 | **2. Dropship** | Dropship location | `location_id` | Vendor PO (no stock ↓) |
 | **3. Mixed** | Mixed intent (WH + Dropship) | Location + route context | Parallel WH + DS flows (route-driven) |
 | **4. Backorder** | Backorder accepted on Main WH | Main WH location + order data | PO to WH → receipt → allocate backorder → ship |
-| **5. Refund** | Refund event | `refunds[]` payload | Credit Note + Return |
+| **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return (+ optional payment registration) |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
 
 ---
