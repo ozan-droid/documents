@@ -78,7 +78,7 @@ flowchart TB
 
     subgraph Odoo ["Odoo ERP"]
         OO["Sale Order"]
-        WH["Warehouse Picking"]
+        WH["W0002 Picking"]
         DS["Dropship Flow"]
         INV["Invoice / Payment"]
         STK["Stock Management"]
@@ -163,8 +163,8 @@ Odoo maintains **per-vendor** stock locations, each with two sub-locations:
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
 flowchart TB
-    subgraph WH ["Main Warehouse"]
-        WHS["WH/Stock"]
+    subgraph WH ["Main Warehouse (W0002)"]
+        WHS["W0002/Stock"]
     end
 
     subgraph VendorLocations ["Vendor Locations (Type: Vendor)"]
@@ -236,7 +236,7 @@ flowchart LR
     end
 
     subgraph Odoo ["Odoo Stock Locations"]
-        OW["WH/Stock\n(Allierbygget)"]
+        OW["W0002/Stock\n(Allierbygget)"]
         OA["Ahlsell View/Stock"]
         OD["Dahl View/Stock"]
         OH["Heidenreich View/Stock"]
@@ -261,7 +261,7 @@ flowchart LR
 
 | Mapping Type | Shopify Location | Odoo Location(s) | Use Case |
 |-------------|-----------------|-------------------|----------|
-| **Warehouse** (1:1) | **Allierbygget (Bergen)** | WH/Stock | Main warehouse fulfillment |
+| **Warehouse** (1:1) | **Allierbygget (Bergen)** | W0002/Stock | Main warehouse fulfillment |
 | **Aggregated** (N:1) | **Nettlager** | Ahlsell, Dahl, Heidenreich, Korsbakken, Sanipro, VikingBad `View/Stock` | Combined vendor stock for Dropship |
 
 > [!IMPORTANT]
@@ -304,7 +304,7 @@ sequenceDiagram
     Vendor-->>Customer: Ships directly
     deactivate Odoo
 
-    Note over Odoo: WH/Stock untouched
+    Note over Odoo: W0002/Stock untouched
 ```
 
 ### Odoo Internal Routing (Dropship)
@@ -315,7 +315,7 @@ flowchart TD
     SO["Sale Order\n(Dropship Route)"] --> ROUTE{"Product Route?"}
     
     ROUTE -->|"Dropship"| PO["Purchase Order\nCreated for Vendor"]
-    ROUTE -->|"Warehouse"| PICK["Warehouse Picking\n(WH/Stock)"]
+    ROUTE -->|"Warehouse"| PICK["Warehouse Picking\n(W0002/Stock)"]
     
     PO --> VENDOR_LOC["Vendor Location\n(e.g. Ahlsell View/Stock)"]
     VENDOR_LOC --> SHIP["Ship Directly\nto Customer"]
@@ -359,7 +359,7 @@ sequenceDiagram
     participant Ahlsell as Vendor: Ahlsell
 
     Customer->>Shopify: Places order (mixed items)
-    Note over Shopify: Split fulfillment:<br/>Item A → Allierbygget (WH)<br/>Item B → Nettlager (Dropship)
+    Note over Shopify: Split fulfillment:<br/>Item A → Allierbygget (W0002)<br/>Item B → Nettlager (Dropship)
 
     Shopify->>SYNC: Order payload with<br/>mixed fulfillment context
 
@@ -369,11 +369,11 @@ sequenceDiagram
 
     activate Odoo
     Note right of Odoo: --- WAREHOUSE FLOW (Item A) ---
-    Odoo->>Odoo: Reserve stock from WH/Stock
+    Odoo->>Odoo: Reserve stock from W0002/Stock
     Odoo->>Odoo: Create picking (Allierbygget)
 
     Note right of Odoo: --- DROPSHIP FLOW (Item B) ---
-    Odoo->>Odoo: No WH/Stock touched
+    Odoo->>Odoo: No W0002/Stock touched
     Odoo->>Odoo: Find vendor for product (Ahlsell)
     Odoo->>Ahlsell: Create Purchase Order
     Note right of Odoo: Source: Ahlsell View/Stock
@@ -395,7 +395,7 @@ flowchart LR
     end
 
     subgraph Processing ["Odoo Processing"]
-        P1["Picking\nWH/Stock → Customer"]
+        P1["Picking\nW0002/Stock → Customer"]
         P2["PO → Ahlsell\nAhlsell View/Stock → Customer"]
     end
 
@@ -412,7 +412,7 @@ flowchart LR
 |--------|---------------|
 | **Shopify** | Provides mixed fulfillment intent (warehouse + dropship) |
 | **SYNC** | Carries location/routing context to Odoo |
-| **Odoo** | Executes per-line flow via product routes: WH/Stock picking vs Vendor PO |
+| **Odoo** | Executes per-line flow via product routes: W0002/Stock picking vs Vendor PO |
 
 > [!IMPORTANT]
 > For mixed orders, `location_id` helps determine warehouse context, but line-level execution in Odoo is still driven by product routes and vendor configuration. Do not assume per-line `location_id` routing unless explicitly implemented end-to-end.
@@ -434,7 +434,7 @@ sequenceDiagram
 
     Customer->>Shopify: Places order
 
-    Note over Shopify: Allierbygget (WH) stock = 0<br/>Backorder policy allows checkout
+    Note over Shopify: Allierbygget (W0002) stock = 0<br/>Backorder policy allows checkout
 
     Shopify->>Shopify: Availability check
     Note over Shopify: Decision: Keep Main Warehouse<br/>(do not reroute to Nettlager)
@@ -443,9 +443,9 @@ sequenceDiagram
     SYNC->>Odoo: Creates Sale Order<br/>(Main Warehouse context)
 
     activate Odoo
-    Odoo->>Odoo: Reservation fails/partial (WH stock = 0)
+    Odoo->>Odoo: Reservation fails/partial (W0002 stock = 0)
     Odoo->>Odoo: Creates RFQ/PO for replenishment
-    Odoo->>Vendor: PO destination = Main Warehouse (WH/IN)
+    Odoo->>Vendor: PO destination = Main Warehouse (W0002/IN)
     Vendor-->>Odoo: Deliver to warehouse
     Odoo->>Odoo: Receive PO, allocate to waiting SO/backorder
     Odoo->>Odoo: Pick/pack/ship from Main Warehouse
@@ -460,8 +460,8 @@ sequenceDiagram
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
 flowchart RL
     subgraph Odoo ["Odoo (Stock Truth)"]
-        WH["WH/Stock = 0"]
-        PIN["Incoming PO to WH = 25"]
+        WH["W0002/Stock = 0"]
+        PIN["Incoming PO to W0002 = 25"]
         BO["SO Backorder Queue = 5"]
     end
 
@@ -609,8 +609,8 @@ flowchart TD
     LID{"location_id\nmapped?"}
     
     LID -->|"Yes"| ROUTE{"Product Route + Policy?"}
-    ROUTE -->|"Warehouse + Buy/MTO"| WH["Backorder/Warehouse Flow\n• Wait/partial reserve\n• PO to Main WH\n• Receive → allocate → ship"]
-    ROUTE -->|"Dropship"| DS["Dropship Flow\n• No WH stock deduction\n• PO to vendor\n• Direct shipment"]
+    ROUTE -->|"Warehouse + Buy/MTO"| WH["Backorder/Warehouse Flow\n• Wait/partial reserve\n• PO to Main Warehouse (W0002)\n• Receive → allocate → ship"]
+    ROUTE -->|"Dropship"| DS["Dropship Flow\n• No W0002 stock deduction\n• PO to vendor\n• Direct shipment"]
     LID -->|"❌ No"| ERR["⚠️ Routing risk\n• Wrong warehouse context\n• Wrong PO destination\n• Manual correction needed"]
 
     style WH fill:#eafbe7,stroke:#96bf48,color:#1a1a1a
@@ -630,8 +630,8 @@ flowchart TD
 |----------|----------------|-------------|---------------|
 | **1. Warehouse** | Warehouse location | Mapped payload | Stock ↓ + Picking + Invoice |
 | **2. Dropship** | Dropship location | `location_id` | Vendor PO (no stock ↓) |
-| **3. Mixed** | Mixed intent (WH + Dropship) | Location + route context | Parallel WH + DS flows (route-driven) |
-| **4. Backorder** | Backorder accepted on Main WH | Main WH location + order data | PO to WH → receipt → allocate backorder → ship |
+| **3. Mixed** | Mixed intent (W0002 + Dropship) | Location + route context | Parallel W0002 + DS flows (route-driven) |
+| **4. Backorder** | Backorder accepted on Main Warehouse (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
 | **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return (+ optional payment registration) |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
 
