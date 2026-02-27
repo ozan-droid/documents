@@ -520,24 +520,6 @@ flowchart RL
 > Verified in Bad.no Shopify: "Continue selling when out of stock" is enabled for products in scope.  
 > If this Shopify policy changes later, Scenario 4 behavior at checkout changes accordingly.
 
-### Shopify Verification Checklist (Scenario 4 Preconditions)
-
-Use this checklist to confirm Scenario 4 can happen in your Shopify store:
-
-1. **Variant inventory policy**
-   - Shopify Admin -> Products -> open variant -> Inventory.
-   - Verify whether out-of-stock selling is allowed for that variant (for example "Continue selling when out of stock").
-2. **Location stock context**
-   - In the same variant inventory view, check Allierbygget location quantity/availability.
-   - Confirm order context is expected to be Allierbygget, not Nettlager.
-3. **Click & Collect / Local Pickup behavior**
-   - Shopify Admin -> Settings -> Shipping and delivery -> Local pickup.
-   - Confirm pickup eligibility rules for Allierbygget when stock is 0.
-4. **Real order validation**
-   - Open a recent order in Shopify and verify Delivery method + fulfillment location context for the tested line(s).
-5. **Webhook payload evidence**
-   - Confirm incoming order payload sent to Odoo/SYNC contains the expected location context (`location_id` / fulfillment location fields).
-
 ---
 
 ## Scenario 5 — Refund / Return
@@ -678,6 +660,10 @@ flowchart TD
 | **4. Backorder** | Out-of-stock checkout enabled; order stays in Main Warehouse context (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
 | **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return to W0002 (current default) (+ optional payment registration) |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
+
+> [!NOTE]
+> `Group RFQ = Always` (vendor setting in Odoo) optimizes PO consolidation per vendor.
+> It does not change line-level fulfillment routing decisions described in Scenarios 1-4.
 
 ---
 
