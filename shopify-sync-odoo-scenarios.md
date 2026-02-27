@@ -1,7 +1,7 @@
 # Shopify ↔ SYNC ↔ Odoo — Scenario-Based Integration Guide
 
-> **Version:** 1.1  
-> **Date:** 2026-02-25  
+> **Version:** 1.2  
+> **Date:** 2026-02-27  
 > **Audience:** Developers, Integration Architects, Operations Team
 
 ---
@@ -272,7 +272,7 @@ flowchart LR
 
 ## Scenario 2 — Dropship Order
 
-> The order is fulfilled directly by a vendor — no warehouse stock is touched. Odoo uses vendor-specific locations to route the Purchase Order.
+> This scenario describes the **dropship branch**: a line is fulfilled directly by vendor when the decision engine selects Dropship (typically non-C&C + W0002 free stock shortage on a dropship-capable line).
 
 ### Flow
 
@@ -291,9 +291,10 @@ sequenceDiagram
     SYNC->>SYNC: Transfers payload +<br/>Shopify Location ID
     SYNC->>Odoo: Creates Sale Order<br/>(with Location context)
     Odoo->>Odoo: Resolves mapping + product route policy
+    Odoo->>Odoo: Decision engine checks<br/>C&C + free_qty + vendor
 
     activate Odoo
-    Note over Odoo: Detects Dropship route<br/>on the product
+    Note over Odoo: Route selected = Dropship<br/>(this scenario branch)
 
     Odoo->>Odoo: NO warehouse stock deducted
     Odoo->>Odoo: Dropship route triggers
@@ -312,10 +313,10 @@ sequenceDiagram
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '13px'}}}%%
 flowchart TD
-    SO["Sale Order\n(Dropship Route)"] --> ROUTE{"Product Route?"}
+    SO["Sale Order"] --> ROUTE{"Decision Engine Result?"}
     
     ROUTE -->|"Dropship"| PO["Purchase Order\nCreated for Vendor"]
-    ROUTE -->|"Warehouse"| PICK["Warehouse Picking\n(W0002/Stock)"]
+    ROUTE -->|"Warehouse"| PICK["Warehouse Picking\n(W0002/Stock)\n(Scenario 1/3 branch)"]
     
     PO --> VENDOR_LOC["Vendor Location\n(e.g. Ahlsell View/Stock)"]
     VENDOR_LOC --> SHIP["Ship Directly\nto Customer"]
@@ -335,12 +336,16 @@ flowchart TD
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Routes to "Vendors" location based on availability |
+| **Shopify** | Sends fulfillment intent/location context (e.g., Nettlager for dropship candidate lines) |
 | **SYNC** | Carries `location_id` to Odoo (critical!) |
-| **Odoo** | Creates PO for specific vendor, uses vendor `View/Stock` location |
+| **Odoo** | Makes final line-level route decision and, for this branch, creates vendor PO from vendor `View/Stock` |
 
 > [!CAUTION]
 > If `location_id` is missing or wrong, and product route policy is not strict dropship, Odoo can drift into the wrong operational path (for example warehouse flow), causing stock/fulfillment mismatches.
+
+> [!NOTE]
+> Scenario 2 is not "all dropship-capable products always dropship."  
+> The same product can still follow warehouse branch when W0002 has sufficient free stock, or when Click & Collect forces warehouse flow.
 
 ---
 
@@ -371,6 +376,8 @@ sequenceDiagram
     Note right of Odoo: --- WAREHOUSE FLOW (Item A) ---
     Odoo->>Odoo: Reserve stock from W0002/Stock
     Odoo->>Odoo: Create picking (Allierbygget)
+    Odoo->>Odoo: Pick/pack/ship Item A from W0002
+    Note right of Odoo: If W0002 shortage exists for Item A,<br/>Item A follows Scenario 4 backorder flow
 
     Note right of Odoo: --- DROPSHIP FLOW (Item B) ---
     Odoo->>Odoo: No W0002/Stock touched
@@ -395,7 +402,7 @@ flowchart LR
     end
 
     subgraph Processing ["Odoo Processing"]
-        P1["Picking\nW0002/Stock → Customer"]
+        P1["Picking + Ship\nW0002/Stock → Customer\n(or Scenario 4 backorder if shortage)"]
         P2["PO → Ahlsell\nAhlsell View/Stock → Customer"]
     end
 
@@ -412,16 +419,22 @@ flowchart LR
 |--------|---------------|
 | **Shopify** | Provides mixed fulfillment intent (warehouse + dropship) |
 | **SYNC** | Carries location/routing context to Odoo |
-| **Odoo** | Executes per-line flow via product routes: W0002/Stock picking vs Vendor PO |
+| **Odoo** | Executes per-line flow via product routes: W0002 picking/shipment vs Vendor PO |
 
 > [!IMPORTANT]
 > For mixed orders, `location_id` helps determine warehouse context, but line-level execution in Odoo is still driven by product routes and vendor configuration. Do not assume per-line `location_id` routing unless explicitly implemented end-to-end.
+
+> [!NOTE]
+> Mixed orders can legitimately create multiple operational documents (for example one warehouse delivery + one vendor PO). This is expected behavior.
 
 ---
 
 ## Scenario 4 — Out of Stock → Backorder / Fallback
 
 > Main Warehouse stock is 0. Order remains on Main Warehouse and is fulfilled through backorder (PO to warehouse, then pick/pack/ship).
+
+> [!NOTE]
+> The same warehouse-first backorder principle also applies to Click & Collect lines: no dropship fallback, replenishment goes to W0002 first.
 
 ### Flow
 
@@ -448,7 +461,12 @@ sequenceDiagram
     Odoo->>Vendor: PO destination = Main Warehouse (W0002/IN)
     Vendor-->>Odoo: Deliver to warehouse
     Odoo->>Odoo: Receive PO, allocate to waiting SO/backorder
-    Odoo->>Odoo: Pick/pack/ship from Main Warehouse
+    alt Standard delivery
+        Odoo->>Odoo: Pick/pack/ship from Main Warehouse to customer
+    else Click & Collect
+        Odoo->>Odoo: Stage for pickup in W0002 C&C flow
+        Customer-->>Odoo: Picks up in store
+    end
     deactivate Odoo
 
     Note over Odoo: Correct backorder path — PO goes to warehouse first
@@ -524,8 +542,8 @@ sequenceDiagram
     Odoo->>Odoo: Creates Credit Note
     
     opt Physical return
-        Odoo->>Odoo: Creates Return Picking
-        Odoo->>Odoo: Stock re-added to inventory
+        Odoo->>Odoo: Creates Return Picking (current default: to W0002)
+        Odoo->>Odoo: Stock re-added to W0002 inventory
     end
 
     Odoo->>Odoo: Reconciles payment (if refund payment registration is enabled)
@@ -540,10 +558,14 @@ sequenceDiagram
 |--------|---------------|
 | **Shopify** | Initiates and processes the refund event |
 | **SYNC** | Carries `refunds[]` payload to Odoo |
-| **Odoo** | Creates credit note, optional return picking, optional payment reconciliation |
+| **Odoo** | Creates credit note, optional return picking (default destination: W0002), optional payment reconciliation |
 
 > [!NOTE]
 > Default config is typically: Auto-Refund = enabled, Auto-Return = disabled, Register Payment for Credit Note = disabled.
+
+> [!IMPORTANT]
+> Return destination policy is currently warehouse-first (W0002).  
+> Direct customer-to-vendor return is not enabled by default and requires separate ops approval/SOP.
 
 ---
 
@@ -601,7 +623,7 @@ flowchart LR
 ## Critical Field: `location_id`
 
 `location_id` is a critical routing input, but not the only one.  
-In Odoo, final execution is determined by `location_id` **plus** product routes (`Buy`, `MTO`, `Dropship`) and vendor setup.
+In Odoo, final execution is determined by `location_id` **plus** fulfillment policy (for example C&C override), product routes (`Buy`, `MTO`, `Dropship`), `free_qty`, and vendor setup.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0f0f0', 'primaryTextColor': '#1a1a1a', 'lineColor': '#555', 'textColor': '#1a1a1a', 'fontSize': '14px'}}}%%
@@ -629,10 +651,10 @@ flowchart TD
 | Scenario | Shopify Decides | SYNC Carries | Odoo Executes |
 |----------|----------------|-------------|---------------|
 | **1. Warehouse** | Warehouse location | Mapped payload | Stock ↓ + Picking + Invoice |
-| **2. Dropship** | Dropship location | `location_id` | Vendor PO (no stock ↓) |
+| **2. Dropship** | Dropship intent/location | `location_id` | Vendor PO only when dropship branch is selected (no W0002 stock ↓) |
 | **3. Mixed** | Mixed intent (W0002 + Dropship) | Location + route context | Parallel W0002 + DS flows (route-driven) |
 | **4. Backorder** | Backorder accepted on Main Warehouse (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
-| **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return (+ optional payment registration) |
+| **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return to W0002 (current default) (+ optional payment registration) |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
 
 ---
