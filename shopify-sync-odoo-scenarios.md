@@ -431,7 +431,7 @@ flowchart LR
 
 ## Scenario 4 — Out of Stock → Backorder / Fallback
 
-> Main Warehouse stock is 0. If order checkout is allowed in Shopify and order location context remains Allierbygget, Odoo fulfills via warehouse-first backorder (PO to warehouse, then pick/pack/ship).
+> Main Warehouse stock is 0. In Bad.no Shopify, out-of-stock checkout is enabled (Continue selling when out of stock), so the order can be created and Odoo fulfills via warehouse-first backorder (PO to warehouse, then pick/pack/ship).
 
 > [!NOTE]
 > The same warehouse-first backorder principle also applies to Click & Collect lines: no dropship fallback, replenishment goes to W0002 first.
@@ -447,7 +447,7 @@ sequenceDiagram
 
     Customer->>Shopify: Places order
 
-    Note over Shopify: Allierbygget (W0002) stock = 0<br/>Checkout availability depends on Shopify settings
+    Note over Shopify: Allierbygget (W0002) stock = 0<br/>Checkout allowed (Continue selling is enabled)
 
     Shopify->>Shopify: Availability check
     Note over Shopify: If order is created with Allierbygget context,<br/>do not reroute to Nettlager for this branch
@@ -515,6 +515,10 @@ flowchart RL
 > [!NOTE]
 > `Nettlager` is still valid for **direct dropship scenarios** (Scenario 2/3).  
 > For **Main Warehouse backorder**, routing to Nettlager is a policy error because it bypasses warehouse receipt and packaging.
+
+> [!IMPORTANT]
+> Verified in Bad.no Shopify: "Continue selling when out of stock" is enabled for products in scope.  
+> If this Shopify policy changes later, Scenario 4 behavior at checkout changes accordingly.
 
 ### Shopify Verification Checklist (Scenario 4 Preconditions)
 
@@ -671,7 +675,7 @@ flowchart TD
 | **1. Warehouse** | Warehouse location | Mapped payload | Stock ↓ + Picking + Invoice |
 | **2. Dropship** | Dropship intent/location | `location_id` | Vendor PO only when dropship branch is selected (no W0002 stock ↓) |
 | **3. Mixed** | Mixed intent (W0002 + Dropship) | Location + route context | Parallel W0002 + DS flows (route-driven) |
-| **4. Backorder** | If out-of-stock checkout is allowed, order stays in Main Warehouse context (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
+| **4. Backorder** | Out-of-stock checkout enabled; order stays in Main Warehouse context (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
 | **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return to W0002 (current default) (+ optional payment registration) |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
 
