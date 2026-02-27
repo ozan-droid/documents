@@ -77,12 +77,12 @@ The core fulfillment plan is now implemented in the codebase:
 
 ### ✅ Decision 1: PO Consolidation — Native Group RFQ
 
-**Decision:** Use Odoo 19 native `Group RFQ` on vendor contact forms. No custom 14:30 cron.
+**Decision:** Use Odoo 19 native `Group RFQ` on vendor contact forms with `Always` for all active vendors. No custom 14:30 cron.
 
 **Rationale:** Odoo 19 provides vendor-level PO consolidation out of the box. The 14:30 requirement was not a hard business constraint — the goal is "fewer POs per vendor per day," not "exactly at 14:30."
 
 **Implementation:**
-- Set `group_rfq = 'day'` or `'all'` on each active vendor in `res.partner`
+- Set `group_rfq = 'all'` on each active vendor in `res.partner`
 - Location: Contacts → Vendor → Sales & Purchase tab → "Group RFQ"
 - Odoo auto-merges draft RFQs for the same vendor when procurement runs
 
@@ -95,7 +95,7 @@ res.partner.group_rfq = Selection:
 ```
 
 > [!NOTE]
-> If exact 14:30 cut-off is later requested, a scheduled action can be added incrementally. But start with native.
+> Confirmed policy is now **Always** for all vendors. If exact 14:30 cut-off is later requested, a scheduled action can be added incrementally.
 
 📎 https://www.odoo.com/documentation/19.0/applications/inventory_and_mrp/inventory/warehouses_storage/replenishment.html
 
@@ -120,7 +120,7 @@ if is_dropship_capable and free_qty < qty:
         raise UserError(_(
             "Cannot confirm: %s has no vendor configured for dropship."
         ) % product.display_name)
-    line.route_id = dropship_route
+    line.route_ids = [dropship_route]
 ```
 
 **Preflight complement:** Data audit script should generate CSV of dropship products without `supplierinfo` records before go-live.
@@ -129,9 +129,9 @@ if is_dropship_capable and free_qty < qty:
 
 ---
 
-### ✅ Decision 3: Dropship Return Routing — Return to W0002
+### ✅ Decision 3: Dropship Return Routing — Return to W0002 (Current Default / Pending Final Ops Confirmation)
 
-**Decision:** All customer returns go to W0002 (main warehouse), regardless of original fulfillment method. Vendor returns handled separately in bulk.
+**Decision:** Current default remains: all customer returns go to W0002 (main warehouse), regardless of original fulfillment method. Vendor returns handled separately in bulk. Final ops confirmation is pending.
 
 **Rationale:**
 - Odoo standard Return Picking works out of the box for W0002 — no development needed
@@ -143,7 +143,7 @@ if is_dropship_capable and free_qty < qty:
 - Physical: Standard Return Picking → W0002
 - Vendor return: Manual / periodic process based on vendor agreements, documented in operations SOP
 
-> No code changes required. SOP document to be created for operations team.
+> No code changes required for current behavior. If ops confirms a direct-to-vendor return policy later, this decision and SOP must be revised.
 
 ---
 
@@ -154,7 +154,7 @@ if is_dropship_capable and free_qty < qty:
 **Rationale:**
 - Shopify already shows C&C with "Leveres til butikk, Hent etter: 3-5 virkedager" — this implies a backorder-to-store flow is expected
 - Dropship to customer address makes no sense for C&C (customer expects to pick up at store)
-- DB evidence: 4 C&C orders incorrectly fell into dropship — this is a bug to fix
+- DB evidence: 4 C&C orders incorrectly fell into dropship — decision engine now prevents this path
 
 **Scenario Matrix:**
 
@@ -174,42 +174,50 @@ if is_dropship_capable and free_qty < qty:
 The decision engine runs at SO confirmation, assigning a single deterministic route per line. Order of evaluation matters — C&C short-circuits first.
 
 ```python
-def _assign_fulfillment_routes(self, order):
+def _apply_fulfillment_routes_before_confirm(self, order):
     warehouse = self.env.ref('stock.warehouse0')  # W0002
     location = warehouse.lot_stock_id
     buy_route = self.env.ref('purchase_stock.route_warehouse0_buy')
     dropship_route = self.env.ref('stock_dropshipping.route_drop_shipping')
     mto_route = self.env.ref('stock.route_warehouse0_mto')
 
-    for line in order.order_line.filtered(lambda l: l.product_id.type == 'product'):
+    for line in order.order_line.filtered(lambda l: l.product_id.is_storable):
         product = line.product_id
         free_qty = product.with_context(location=location.id).free_qty
         qty = line.product_uom_qty
         is_dropship = product.product_tmpl_id.x_is_dropship_capable
+        has_vendor = bool(product.seller_ids)
 
-        # ── GATE 1: Click & Collect → always warehouse ──
+        # ── GATE 1: Click & Collect → always warehouse flow (never dropship) ──
         if order.x_is_click_collect:
-            line.route_id = buy_route
+            if free_qty >= qty or order.cc_shortage_policy == 'wait_in_warehouse':
+                line.route_ids = [buy_route]
+            else:
+                # Backorder to store
+                line.route_ids = [mto_route, buy_route] if has_vendor else [buy_route]
             continue
 
         # ── GATE 2: Sufficient warehouse stock → ship from warehouse ──
         if free_qty >= qty:
-            line.route_id = buy_route
+            line.route_ids = [buy_route]
             continue
 
         # ── GATE 3: Insufficient stock, dropship-capable ──
         if is_dropship:
-            if not product.seller_ids:
-                # Block: no vendor configured
+            if has_vendor:
+                line.route_ids = [dropship_route]
+            elif order.vendorless_policy == 'mto_buy_fallback':
+                line.route_ids = [mto_route, buy_route]
+            else:
+                # Block + Activity: no vendor configured
                 raise UserError(...)
-            line.route_id = dropship_route
             continue
 
         # ── GATE 4: Insufficient stock, non-dropship → backorder ──
-        if product.seller_ids:
-            line.route_id = mto_route  # MTO+Buy → PO to vendor → W0002
+        if has_vendor and order.non_ds_shortage_policy != 'buy_only_wait':
+            line.route_ids = [mto_route, buy_route]  # MTO+Buy → PO to vendor → W0002
         else:
-            line.route_id = buy_route  # fallback: warehouse, will wait
+            line.route_ids = [buy_route]  # fallback: warehouse, wait for stock
 ```
 
 ### Decision Flow Diagram
@@ -217,7 +225,11 @@ def _assign_fulfillment_routes(self, order):
 ```mermaid
 flowchart TD
     START["SO Confirm"] --> CC{"x_is_click_collect?"}
-    CC -->|"Yes"| WH_CC["Buy Route<br/>(warehouse / backorder-to-store)"]
+    CC -->|"Yes"| CC_STOCK{"free_qty >= qty?"}
+    CC_STOCK -->|"Yes"| WH_CC["Buy Route<br/>(warehouse pickup flow)"]
+    CC_STOCK -->|"No"| CC_VENDOR{"has vendor?"}
+    CC_VENDOR -->|"Yes"| CC_MTO["MTO+Buy<br/>(backorder to store)"]
+    CC_VENDOR -->|"No"| CC_WAIT["Buy Route<br/>(wait in warehouse)"]
     CC -->|"No"| STOCK{"free_qty >= qty?"}
     STOCK -->|"Yes"| WH["Buy Route<br/>(ship from W0002)"]
     STOCK -->|"No"| DS{"is_dropship_capable?"}
@@ -229,6 +241,8 @@ flowchart TD
     VENDOR2 -->|"No"| WH_WAIT["Buy Route<br/>(wait for stock)"]
 
     style WH_CC fill:#eafbe7,stroke:#96bf48
+    style CC_MTO fill:#e8f4fd,stroke:#4a90d9
+    style CC_WAIT fill:#f3edf2,stroke:#714b67
     style WH fill:#eafbe7,stroke:#96bf48
     style DROP fill:#fff4e0,stroke:#f5a623
     style BLOCK fill:#fde8e8,stroke:#e53e3e
@@ -246,8 +260,9 @@ flowchart TD
 
 **Decision:** No line splitting. Single route per line:
 - `free_qty >= qty` → warehouse
-- `free_qty == 0` → dropship (if capable)
-- `0 < free_qty < qty` → **prefer warehouse**, Odoo handles partial reservation (`partially_available` / `waiting`). Remaining qty fulfilled when stock arrives or via manual intervention.
+- `free_qty < qty` + dropship-capable (non-C&C) → full-line dropship (if vendor exists)
+- `free_qty < qty` + non-dropship (non-C&C) → full-line `MTO+Buy` (if vendor exists)
+- `free_qty < qty` + C&C → warehouse backorder-to-store (`MTO+Buy` if vendor exists)
 
 > Avoids dual-route race conditions. Line splitting can be added in v2 if needed.
 
@@ -268,17 +283,15 @@ flowchart TD
 ```python
 # product.template
 x_is_dropship_capable = fields.Boolean(
-    compute='_compute_is_dropship_capable',
+    compute='_compute_x_is_dropship_capable',
     store=True,
 )
 
-@api.depends('x_automation_categ_ids', 'x_automation_categ_ids.chuck_action')
-def _compute_is_dropship_capable(self):
+@api.depends('x_automation_categ_ids', 'x_automation_categ_ids.code')
+def _compute_x_is_dropship_capable(self):
     for product in self:
-        product.x_is_dropship_capable = any(
-            c.chuck_action in ('manual_review', 'auto_send', 'auto_email')
-            for c in product.x_automation_categ_ids
-        )
+        codes = set(product.x_automation_categ_ids.mapped('code') or [])
+        product.x_is_dropship_capable = bool(codes.intersection({'411', '422'}))
 ```
 
 ---
