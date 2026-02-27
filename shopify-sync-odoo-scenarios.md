@@ -1,6 +1,6 @@
 # Shopify ↔ SYNC ↔ Odoo — Scenario-Based Integration Guide
 
-> **Version:** 1.2  
+> **Version:** 1.3  
 > **Date:** 2026-02-27  
 > **Audience:** Developers, Integration Architects, Operations Team
 
@@ -431,7 +431,7 @@ flowchart LR
 
 ## Scenario 4 — Out of Stock → Backorder / Fallback
 
-> Main Warehouse stock is 0. Order remains on Main Warehouse and is fulfilled through backorder (PO to warehouse, then pick/pack/ship).
+> Main Warehouse stock is 0. If order checkout is allowed in Shopify and order location context remains Allierbygget, Odoo fulfills via warehouse-first backorder (PO to warehouse, then pick/pack/ship).
 
 > [!NOTE]
 > The same warehouse-first backorder principle also applies to Click & Collect lines: no dropship fallback, replenishment goes to W0002 first.
@@ -447,10 +447,10 @@ sequenceDiagram
 
     Customer->>Shopify: Places order
 
-    Note over Shopify: Allierbygget (W0002) stock = 0<br/>Backorder policy allows checkout
+    Note over Shopify: Allierbygget (W0002) stock = 0<br/>Checkout availability depends on Shopify settings
 
     Shopify->>Shopify: Availability check
-    Note over Shopify: Decision: Keep Main Warehouse<br/>(do not reroute to Nettlager)
+    Note over Shopify: If order is created with Allierbygget context,<br/>do not reroute to Nettlager for this branch
 
     Shopify->>SYNC: Order payload<br/>(location_id = Allierbygget)
     SYNC->>Odoo: Creates Sale Order<br/>(Main Warehouse context)
@@ -508,13 +508,31 @@ flowchart RL
 
 | System | Responsibility |
 |--------|---------------|
-| **Shopify** | Keeps Main Warehouse location for backorderable items |
+| **Shopify** | Controls whether out-of-stock checkout is allowed and sends location context (for this branch: Allierbygget) |
 | **SYNC** | Carries Main Warehouse location + order payload |
 | **Odoo** | Executes backorder: PO to warehouse, receipt, allocation, shipment |
 
 > [!NOTE]
 > `Nettlager` is still valid for **direct dropship scenarios** (Scenario 2/3).  
 > For **Main Warehouse backorder**, routing to Nettlager is a policy error because it bypasses warehouse receipt and packaging.
+
+### Shopify Verification Checklist (Scenario 4 Preconditions)
+
+Use this checklist to confirm Scenario 4 can happen in your Shopify store:
+
+1. **Variant inventory policy**
+   - Shopify Admin -> Products -> open variant -> Inventory.
+   - Verify whether out-of-stock selling is allowed for that variant (for example "Continue selling when out of stock").
+2. **Location stock context**
+   - In the same variant inventory view, check Allierbygget location quantity/availability.
+   - Confirm order context is expected to be Allierbygget, not Nettlager.
+3. **Click & Collect / Local Pickup behavior**
+   - Shopify Admin -> Settings -> Shipping and delivery -> Local pickup.
+   - Confirm pickup eligibility rules for Allierbygget when stock is 0.
+4. **Real order validation**
+   - Open a recent order in Shopify and verify Delivery method + fulfillment location context for the tested line(s).
+5. **Webhook payload evidence**
+   - Confirm incoming order payload sent to Odoo/SYNC contains the expected location context (`location_id` / fulfillment location fields).
 
 ---
 
@@ -653,7 +671,7 @@ flowchart TD
 | **1. Warehouse** | Warehouse location | Mapped payload | Stock ↓ + Picking + Invoice |
 | **2. Dropship** | Dropship intent/location | `location_id` | Vendor PO only when dropship branch is selected (no W0002 stock ↓) |
 | **3. Mixed** | Mixed intent (W0002 + Dropship) | Location + route context | Parallel W0002 + DS flows (route-driven) |
-| **4. Backorder** | Backorder accepted on Main Warehouse (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
+| **4. Backorder** | If out-of-stock checkout is allowed, order stays in Main Warehouse context (W0002) | Main Warehouse (W0002) location + order data | PO to W0002 → receipt → allocate backorder → ship |
 | **5. Refund** | Refund event | `refunds[]` payload | Credit Note + optional Return to W0002 (current default) (+ optional payment registration) |
 | **6. Stock Sync** | Displays stock | Stock levels | Stock truth source |
 
